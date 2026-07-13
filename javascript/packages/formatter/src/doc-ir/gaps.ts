@@ -5,6 +5,11 @@
  * in the Doc-IR pipeline that reads source whitespace; lowering maps gap
  * kinds to Doc separators mechanically and never inspects whitespace itself.
  *
+ * Gaps are read from the source text between node locations when a
+ * SourceIndex is provided (necessary inside open tags, where the parser
+ * drops whitespace nodes entirely), with the whitespace-node/text-edge
+ * walk as fallback.
+ *
  * Content-preserving contexts (pre/script/style/textarea) never reach the
  * classifier — lowering copies their raw source verbatim.
  */
@@ -21,6 +26,58 @@ export type GapKind =
   | "line"
   /** Whitespace with a blank line: preserved (capped at one) by policy. */
   | "blank"
+
+export interface SourcePosition {
+  /** 1-based */
+  line: number
+  /** 0-based */
+  column: number
+}
+
+/** Resolves parser positions (line/column) to offsets into the source. */
+export class SourceIndex {
+  private lineStarts: number[]
+
+  constructor(private source: string) {
+    this.lineStarts = [0]
+
+    for (let i = 0; i < source.length; i++) {
+      if (source[i] === "\n") this.lineStarts.push(i + 1)
+    }
+  }
+
+  offsetOf(position: SourcePosition): number | null {
+    const lineStart = this.lineStarts[position.line - 1]
+
+    if (lineStart === undefined) return null
+
+    return lineStart + position.column
+  }
+
+  /** The source text between two positions, or null when it cannot be
+   *  resolved or contains non-whitespace (defensive fallback trigger). */
+  whitespaceBetween(from: SourcePosition, to: SourcePosition): string | null {
+    const start = this.offsetOf(from)
+    const end = this.offsetOf(to)
+
+    if (start === null || end === null || start > end) return null
+
+    const text = this.source.slice(start, end)
+
+    if (/[^ \t\n\r]/.test(text)) return null
+
+    return text
+  }
+}
+
+export interface GapContext {
+  index?: SourceIndex
+  /** Position right after the parent's opening construct (e.g. after `<%`
+   *  tag close or after `<div`): enables classifying the leading gap. */
+  openEnd?: SourcePosition
+  /** Position of the parent's closing construct: enables the trailing gap. */
+  closeStart?: SourcePosition
+}
 
 export interface ClassifiedChildren {
   /** Significant children (whitespace-only nodes removed). */
@@ -69,33 +126,48 @@ function trailingWhitespace(node: Node): string {
  * Split a children list into significant items and the classified gaps
  * between them (and against the parent's boundaries).
  *
- * A gap accumulates: the trailing whitespace of the previous text item,
- * any whitespace-only siblings, and the leading whitespace of the next
- * text item.
+ * A gap accumulates: the source whitespace between the previous item's end
+ * and this item's start (or, without a SourceIndex, the whitespace-only
+ * siblings), plus the inner text-edge whitespace of text items.
  */
-export function classifyChildren(children: Node[]): ClassifiedChildren {
+export function classifyChildren(children: Node[], context: GapContext = {}): ClassifiedChildren {
   const items: Node[] = []
   const gaps: GapKind[] = []
 
-  let pendingWhitespace = ""
+  /** Trailing text-edge whitespace inside the previous item's own location. */
+  let edge = ""
+  /** Whitespace-only siblings since the previous item (fallback path). */
+  let accumulated = ""
+  let previousEnd: SourcePosition | null = context.openEnd ?? null
+
+  const betweenBySource = (to: SourcePosition | undefined): string | null => {
+    if (!context.index || !previousEnd || !to) return null
+
+    return context.index.whitespaceBetween(previousEnd, to)
+  }
 
   for (const child of children) {
     if (isWhitespaceOnly(child)) {
-      pendingWhitespace += whitespaceOf(child)
+      accumulated += whitespaceOf(child)
       continue
     }
 
-    const gapWhitespace = pendingWhitespace + leadingWhitespace(child)
+    const slice = betweenBySource(child.location?.start)
+    const between = edge + (slice !== null ? slice : accumulated) + leadingWhitespace(child)
 
-    gaps.push(classifyWhitespace(gapWhitespace))
+    gaps.push(classifyWhitespace(between))
     items.push(child)
 
-    pendingWhitespace = trailingWhitespace(child)
+    edge = trailingWhitespace(child)
+    accumulated = ""
+    previousEnd = child.location?.end ?? null
   }
+
+  const slice = betweenBySource(context.closeStart)
 
   return {
     items,
     gaps,
-    trailing: classifyWhitespace(pendingWhitespace),
+    trailing: classifyWhitespace(edge + (slice !== null ? slice : accumulated)),
   }
 }

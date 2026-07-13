@@ -68,7 +68,7 @@ import {
   isContentPreserving,
   isFrontmatter,
   isHerbDisableComment,
-  isClosingPunctuation,
+  isLineBreakingElement,
 } from "../format-helpers.js"
 
 import {
@@ -80,11 +80,19 @@ import {
 import type { Doc } from "./doc.js"
 import { group, indent, line, softline, hardline, fill, join, lineSuffix, literalText } from "./doc.js"
 import { printDocToString } from "./layout.js"
-import { classifyChildren, GapKind } from "./gaps.js"
+import { classifyChildren, SourceIndex, GapKind, GapContext, SourcePosition } from "./gaps.js"
 
 export interface LowerOptions {
   indentWidth: number
   maxLineLength: number
+  /** Source text; enables exact gap classification where the parser drops
+   *  whitespace nodes (open tags, attribute-position control flow). */
+  source?: string
+}
+
+interface Boundaries {
+  openEnd?: SourcePosition
+  closeStart?: SourcePosition
 }
 
 type ChildMode = "element" | "control-flow"
@@ -109,10 +117,23 @@ const WORD_SEPARATOR = /[ \t\n\r]+/
 const ANY_WHITESPACE = /[ \t\n\r]+/g
 const ERB_VALUE = /<%[^%]*%>/
 
+interface LocatedToken {
+  value: string
+  location?: { start: SourcePosition, end: SourcePosition } | null
+}
+
 interface ERBTagLike {
-  tag_opening?: { value: string } | null
-  content?: { value: string } | null
-  tag_closing?: { value: string } | null
+  tag_opening?: LocatedToken | null
+  content?: LocatedToken | null
+  tag_closing?: LocatedToken | null
+}
+
+function tagOpenEnd(node: ERBTagLike | null | undefined): SourcePosition | undefined {
+  return node?.tag_closing?.location?.end
+}
+
+function tagCloseStart(node: ERBTagLike | null | undefined): SourcePosition | undefined {
+  return node?.tag_opening?.location?.start
 }
 
 /**
@@ -157,9 +178,15 @@ class FillBuilder {
 export class Lowerer {
   private options: LowerOptions
   private tagNameStack: string[] = []
+  private sourceIndex: SourceIndex | undefined
 
   constructor(options: LowerOptions) {
     this.options = options
+    this.sourceIndex = options.source !== undefined ? new SourceIndex(options.source) : undefined
+  }
+
+  private gapContext(boundaries: Boundaries = {}): GapContext {
+    return { index: this.sourceIndex, ...boundaries }
   }
 
   private get currentTagName(): string {
@@ -177,7 +204,7 @@ export class Lowerer {
       parts.push(literalText(first.content.trimEnd()))
       children = children.slice(1)
 
-      if (classifyChildren(children).items.length > 0) {
+      if (classifyChildren(children, this.gapContext()).items.length > 0) {
         parts.push(hardline, hardline)
       }
     }
@@ -225,16 +252,33 @@ export class Lowerer {
     return [this.lowerNode(node)]
   }
 
+  /**
+   * Render a doc flat (no width constraint). Returns null if it still
+   * contains newlines (hard breaks), i.e. it cannot be an atom.
+   */
+  private renderFlat(doc: Doc): string | null {
+    const rendered = printDocToString(doc, { indentWidth: this.options.indentWidth, maxLineLength: Number.MAX_SAFE_INTEGER })
+
+    return rendered.includes("\n") ? null : rendered
+  }
+
   /** Add an item's units to the builder; `separator` applies before the first
-   *  unit (null = glue). Words that are pure closing punctuation always glue. */
-  private addUnitsToBuilder(builder: FillBuilder, node: Node, separator: Doc | null): void {
-    const units = this.flowUnits(node)
+   *  unit (null = glue). With `atomize`, inline elements render as flat
+   *  strings so text-flow atoms never break internally (matching the current
+   *  formatter's inline rendering). */
+  private addUnitsToBuilder(builder: FillBuilder, node: Node, separator: Doc | null, atomize = false): void {
+    let units = this.flowUnits(node)
+
+    if (atomize && isNode(node, HTMLElementNode)) {
+      const flat = this.renderFlat(units[0])
+
+      if (flat !== null) units = [flat]
+    }
 
     units.forEach((unit, index) => {
-      const isPunctuation = typeof unit === "string" && isClosingPunctuation(unit)
       const sep = index === 0 ? separator : line
 
-      if (isPunctuation || sep === null) {
+      if (sep === null) {
         builder.glue(unit)
       } else {
         builder.add(sep, unit)
@@ -242,8 +286,8 @@ export class Lowerer {
     })
   }
 
-  private lowerChildren(children: Node[], mode: ChildMode): LoweredChildren {
-    const { items, gaps, trailing } = classifyChildren(children)
+  private lowerChildren(children: Node[], mode: ChildMode, boundaries: Boundaries = {}): LoweredChildren {
+    const { items, gaps, trailing } = classifyChildren(children, this.gapContext(boundaries))
 
     const out: Doc[] = []
     const leadingSuffixes: Doc[] = []
@@ -324,11 +368,24 @@ export class Lowerer {
         if (run.length >= 2 && hasText && hasAtomic) {
           startPart(blockSeparator(gap))
 
+          let afterFlowBreak = false
+
           for (let runIndex = index; runIndex < end; runIndex++) {
             const runGap = gaps[runIndex]
-            const separator = runIndex === index || runGap === "glued" ? null : line
+            const separator = runIndex === index || afterFlowBreak || runGap === "glued" ? null : line
 
-            this.addUnitsToBuilder(currentBuilder!, items[runIndex], runIndex === index ? null : separator)
+            this.addUnitsToBuilder(currentBuilder!, items[runIndex], separator, true)
+            afterFlowBreak = false
+
+            // A <br>/<hr> ends the visual line: split the fill here and join
+            // with a group-mode separator, so broken paragraphs break after
+            // it while inline-fitting ones keep the authored spacing.
+            if (isLineBreakingElement(items[runIndex]) && runIndex + 1 < end) {
+              flushBuilder()
+              out.push(gaps[runIndex + 1] === "glued" ? softline : line)
+              currentBuilder = new FillBuilder()
+              afterFlowBreak = true
+            }
           }
 
           fillRunCount++
@@ -361,7 +418,7 @@ export class Lowerer {
       if (merge !== null) {
         if (merge !== "") currentBuilder!.glue(merge)
 
-        this.addUnitsToBuilder(currentBuilder!, item, null)
+        this.addUnitsToBuilder(currentBuilder!, item, null, true)
         index++
         continue
       }
@@ -419,18 +476,9 @@ export class Lowerer {
     const words = this.textWords(node)
 
     if (words.length === 0) return ""
+    if (words.length === 1) return words[0]
 
-    const builder = new FillBuilder()
-
-    words.forEach((word, index) => {
-      if (index > 0 && !isClosingPunctuation(word)) {
-        builder.add(line, word)
-      } else {
-        builder.glue(word)
-      }
-    })
-
-    return builder.toDoc()
+    return fill(join(line, words))
   }
 
   // --- ERB tags ---
@@ -486,8 +534,8 @@ export class Lowerer {
    * A control-flow segment: opening tag, indented statements, positioned so
    * subsequent clause tags (elsif/else/end) sit at the tag's own level.
    */
-  private controlFlowSegment(tag: Doc, statements: Node[]): { parts: Doc[], trailingSeparator: Doc } {
-    const body = this.lowerChildren(statements, "control-flow")
+  private controlFlowSegment(tag: Doc, statements: Node[], boundaries: Boundaries = {}): { parts: Doc[], trailingSeparator: Doc } {
+    const body = this.lowerChildren(statements, "control-flow", boundaries)
 
     if (body.empty) {
       return { parts: [tag, ...body.leadingSuffixes], trailingSeparator: this.mapBoundaryGap(body.trailingGap) }
@@ -505,11 +553,15 @@ export class Lowerer {
     let current: ERBIfNode | ERBElseNode | null = node
 
     while (current) {
-      const segment = this.controlFlowSegment(this.erbTagDoc(current), current.statements)
+      const next: ERBIfNode | ERBElseNode | null = isNode(current, ERBIfNode) ? current.subsequent : null
+      const segment = this.controlFlowSegment(this.erbTagDoc(current), current.statements, {
+        openEnd: tagOpenEnd(current),
+        closeStart: tagCloseStart(next ?? node.end_node),
+      })
 
       parts.push(...segment.parts, segment.trailingSeparator)
 
-      current = isNode(current, ERBIfNode) ? current.subsequent : null
+      current = next
     }
 
     if (node.end_node) parts.push(this.erbTagDoc(node.end_node))
@@ -519,12 +571,18 @@ export class Lowerer {
 
   private lowerUnless(node: ERBUnlessNode): Doc {
     const parts: Doc[] = []
-    const segment = this.controlFlowSegment(this.erbTagDoc(node), node.statements)
+    const segment = this.controlFlowSegment(this.erbTagDoc(node), node.statements, {
+      openEnd: tagOpenEnd(node),
+      closeStart: tagCloseStart(node.else_clause ?? node.end_node),
+    })
 
     parts.push(...segment.parts, segment.trailingSeparator)
 
     if (node.else_clause) {
-      const elseSegment = this.controlFlowSegment(this.erbTagDoc(node.else_clause), node.else_clause.statements)
+      const elseSegment = this.controlFlowSegment(this.erbTagDoc(node.else_clause), node.else_clause.statements, {
+        openEnd: tagOpenEnd(node.else_clause),
+        closeStart: tagCloseStart(node.end_node),
+      })
 
       parts.push(...elseSegment.parts, elseSegment.trailingSeparator)
     }
@@ -536,7 +594,10 @@ export class Lowerer {
 
   private lowerBlock(node: ERBBlockNode | ERBRenderNode): Doc {
     const parts: Doc[] = []
-    const body = this.lowerChildren(node.body, "element")
+    const body = this.lowerChildren(node.body, "element", {
+      openEnd: tagOpenEnd(node),
+      closeStart: tagCloseStart(node.rescue_clause ?? node.else_clause ?? node.ensure_clause ?? node.end_node),
+    })
 
     parts.push(this.erbTagDoc(node), ...body.leadingSuffixes)
 
@@ -569,7 +630,9 @@ export class Lowerer {
 
     while (current) {
       const statements: Node[] = (current as ERBRescueNode).statements ?? []
-      const segment = this.controlFlowSegment(this.erbTagDoc(current as ERBTagLike as ERBContentNode), statements)
+      const segment = this.controlFlowSegment(this.erbTagDoc(current as unknown as ERBTagLike), statements, {
+        openEnd: tagOpenEnd(current as unknown as ERBTagLike),
+      })
 
       parts.push(...segment.parts)
 
@@ -584,7 +647,7 @@ export class Lowerer {
   }
 
   private lowerClause(node: ERBWhenNode | ERBInNode, statements: Node[]): Doc {
-    const segment = this.controlFlowSegment(this.erbTagDoc(node), statements)
+    const segment = this.controlFlowSegment(this.erbTagDoc(node), statements, { openEnd: tagOpenEnd(node) })
 
     return segment.parts
   }
@@ -592,7 +655,10 @@ export class Lowerer {
   private lowerCase(node: ERBCaseNode | ERBCaseMatchNode): Doc {
     const parts: Doc[] = [this.erbTagDoc(node)]
 
-    const lead = this.lowerChildren(node.children, "control-flow")
+    const lead = this.lowerChildren(node.children, "control-flow", {
+      openEnd: tagOpenEnd(node),
+      closeStart: tagCloseStart(node.conditions[0] as unknown as ERBTagLike ?? node.else_clause ?? node.end_node),
+    })
 
     if (!lead.empty) {
       parts.push(indent([hardline, lead.doc]))
@@ -603,7 +669,10 @@ export class Lowerer {
     }
 
     if (node.else_clause) {
-      const segment = this.controlFlowSegment(this.erbTagDoc(node.else_clause), node.else_clause.statements)
+      const segment = this.controlFlowSegment(this.erbTagDoc(node.else_clause), node.else_clause.statements, {
+        openEnd: tagOpenEnd(node.else_clause),
+        closeStart: tagCloseStart(node.end_node),
+      })
 
       parts.push(hardline, segment.parts)
     }
@@ -615,7 +684,10 @@ export class Lowerer {
 
   private lowerLoop(node: ERBWhileNode | ERBUntilNode | ERBForNode): Doc {
     const parts: Doc[] = []
-    const segment = this.controlFlowSegment(this.erbTagDoc(node), node.statements)
+    const segment = this.controlFlowSegment(this.erbTagDoc(node), node.statements, {
+      openEnd: tagOpenEnd(node),
+      closeStart: tagCloseStart(node.end_node),
+    })
 
     parts.push(...segment.parts, segment.trailingSeparator)
 
@@ -626,7 +698,10 @@ export class Lowerer {
 
   private lowerBegin(node: ERBBeginNode): Doc {
     const parts: Doc[] = []
-    const segment = this.controlFlowSegment(this.erbTagDoc(node), node.statements)
+    const segment = this.controlFlowSegment(this.erbTagDoc(node), node.statements, {
+      openEnd: tagOpenEnd(node),
+      closeStart: tagCloseStart(node.rescue_clause ?? node.else_clause ?? node.ensure_clause ?? node.end_node),
+    })
 
     parts.push(...segment.parts, segment.trailingSeparator)
 
@@ -656,7 +731,10 @@ export class Lowerer {
         return [openDoc, this.lowerPreservedBody(node.body), closeDoc]
       }
 
-      const body = this.lowerChildren(node.body, "element")
+      const body = this.lowerChildren(node.body, "element", {
+        openEnd: node.open_tag?.location?.end,
+        closeStart: node.close_tag?.location?.start,
+      })
 
       if (body.empty) {
         return [openDoc, ...body.leadingSuffixes, closeDoc]
@@ -710,7 +788,10 @@ export class Lowerer {
 
     if (node.open_conditional) parts.push(this.lowerNode(node.open_conditional))
 
-    const body = this.lowerChildren(node.body, "element")
+    const body = this.lowerChildren(node.body, "element", {
+      openEnd: node.open_tag?.location?.end,
+      closeStart: node.close_tag?.location?.start,
+    })
 
     if (!body.empty) {
       parts.push(indent([hardline, hardline, body.doc]), hardline, hardline)
@@ -728,7 +809,7 @@ export class Lowerer {
   private lowerOpenTag(node: HTMLOpenTagNode): Doc {
     const tagName = getTagName(node)
     const selfClosing = node.tag_closing?.value === "/>"
-    const significant = classifyChildren(node.children).items
+    const significant = classifyChildren(node.children, this.gapContext()).items
 
     if (significant.length === 0) {
       return `<${tagName}${selfClosing ? " />" : ">"}`
@@ -827,10 +908,11 @@ export class Lowerer {
 
 /**
  * Spike entry point: format a parsed document with the Doc-IR pipeline.
+ * Pass the original source in `options.source` for exact gap classification.
  */
 export function printWithDocIR(node: DocumentNode, options: LowerOptions): string {
   const lowerer = new Lowerer(options)
   const doc = lowerer.lowerDocument(node)
 
-  return printDocToString(doc, options)
+  return printDocToString(doc, { indentWidth: options.indentWidth, maxLineLength: options.maxLineLength })
 }
