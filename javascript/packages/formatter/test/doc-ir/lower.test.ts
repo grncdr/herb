@@ -11,7 +11,7 @@ function format(source: string, opts = options): string {
 
   if (result.failed) throw new Error("parse failed")
 
-  return printWithDocIR(result.value, opts)
+  return printWithDocIR(result.value, { ...opts, source })
 }
 
 describe("doc-ir lowering", () => {
