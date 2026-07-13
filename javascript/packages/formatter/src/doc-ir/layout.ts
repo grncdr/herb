@@ -64,6 +64,7 @@ export function propagateBreaks(doc: Doc): void {
     if (visited.has(doc)) {
       return doc.type === "breakParent"
         || doc.type === "hardline"
+        || doc.type === "literalline"
         || (doc.type === "group" && doc.breakParent === true)
         || false
     }
@@ -73,6 +74,7 @@ export function propagateBreaks(doc: Doc): void {
     switch (doc.type) {
       case "breakParent":
       case "hardline":
+      case "literalline":
         return true
       case "group": {
         const childBreaks = visit(doc.contents)
@@ -103,7 +105,6 @@ export function propagateBreaks(doc: Doc): void {
         return false
       case "line":
       case "softline":
-      case "literalline":
         return false
     }
   }
@@ -220,7 +221,14 @@ export function printDocToString(doc: Doc, options: LayoutOptions): string {
   let pos = 0
   let shouldRemeasure = false
 
-  while (commands.length > 0) {
+  while (true) {
+    if (commands.length === 0) {
+      if (lineSuffixes.length === 0) break
+
+      for (let i = lineSuffixes.length - 1; i >= 0; i--) commands.push(lineSuffixes[i])
+      lineSuffixes.length = 0
+    }
+
     const [indent, mode, current] = commands.pop()!
 
     if (typeof current === "string") {
@@ -360,11 +368,6 @@ export function printDocToString(doc: Doc, options: LayoutOptions): string {
 
       case "breakParent":
         break
-    }
-
-    if (commands.length === 0 && lineSuffixes.length > 0) {
-      for (let i = lineSuffixes.length - 1; i >= 0; i--) commands.push(lineSuffixes[i])
-      lineSuffixes.length = 0
     }
   }
 
