@@ -80,3 +80,30 @@ Deferred as a larger, separately-scoped change.
 
 Both deferred cases remain `test.fails` in the fixtures file, documenting the
 target behavior and the blocking reason.
+
+---
+
+# Dev Journal — Doc-IR spike (2026-07-13)
+
+Implementing the spike from DOC-IR-DESIGN.md §7. Modules live in
+`javascript/packages/formatter/src/doc-ir/`; the current formatter is not
+touched.
+
+## doc.ts + layout.ts
+
+- `doc.ts`: the IR from §3 verbatim, plus `join` and `literalText` (splits
+  newline-containing strings into `literalline`-separated parts, since Doc
+  strings must not contain newlines).
+- `layout.ts`: independent port of Prettier's `printDocToString` semantics —
+  command stack of `[indent, mode, doc]`, `propagateBreaks` pre-pass,
+  bounded-lookahead `fits()`, Prettier's pairwise fill algorithm (measure
+  `[content, sep, nextContent]` to decide each separator), lineSuffix
+  buffering flushed at line breaks and at end of document, trailing-whitespace
+  trim on break emission (indentation-only lines become empty — this is what
+  makes blank lines come out clean).
+- No `align`/`indentIfBreak`/`trim` variants — not needed by the lowering
+  sketches; add on demand.
+- Gotcha caught by unit tests: my own width arithmetic, twice — the engine was
+  right and the test expectations were wrong. `fits()` measures against
+  `maxLineLength` inclusive (a line of exactly 80 cols is legal), matching the
+  current formatter's `<=` checks.
