@@ -353,6 +353,14 @@ export class Lowerer {
         }
       }
 
+      // The one insertion exception (design §4): a blank line after a
+      // doctype or XML declaration.
+      const previousItem = items[index - 1]
+
+      if (previousItem && (isNode(previousItem, HTMLDoctypeNode) || isNode(previousItem, XMLDeclarationNode))) {
+        return [hardline, hardline]
+      }
+
       return gap === "blank" ? [hardline, hardline] : hardline
     }
 

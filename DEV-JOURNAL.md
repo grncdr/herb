@@ -166,3 +166,38 @@ Harness snapshot after these fixes: 81.7% exact, 89.5% exact+blank-only-diff,
 formatter under-measures conditional attributes and emits a 90-col line; the
 spike breaks the body instead — rendering-equivalent for a block element).
 Spike is ~20% faster than the current printer on the corpus.
+
+Second iteration round (12–16): byte-column decoding for the source index
+(the parser reports UTF-8 byte columns; "Français" was shifting every gap
+slice on its line), br/hr starting fresh visual lines when preceded by
+whitespace, ERB yield/render-without-body treated as ERB leaves in text flow
+and merging, block-level child elements forcing the parent body open
+(matches current), content-preserving open tags staying flat only while they
+themselves fit, and the design's one blank-line insertion exception after
+doctype/XML declarations.
+
+## Final spike numbers (2026-07-13)
+
+860 corpus inputs compared: **84.2% exact**, **92.1%** exact+blank-policy,
+15 layout-only, 53 content diffs — every one in a documented category (see
+DOC-IR-DIVERGENCES.md). **0 idempotency failures (860/860)**, **1 spike-only
+reparse divergence** (deliberate non-replication of a current-printer width
+bug), 0 crashes. Corpus wall-time 408ms vs 461ms for the current printer —
+and that is with lowering re-rendering atoms via the layout engine; no
+`capture()`-style speculative visitation anywhere.
+
+All four whitespace-family target behaviors (#1729 A/B/C, #609 D) pass as
+positive expectations in `test/doc-ir/lower.test.ts`. Full formatter suite
+(1201 tests + 36 spike tests) green; the current formatter is untouched —
+the spike lives entirely under `src/doc-ir/` behind its own entry point
+(`printWithDocIR`).
+
+Things a future session should know:
+- Parser locations: lines 1-based, columns 0-based **UTF-8 bytes**.
+- Whitespace nodes inside open tags are dropped by the parser — sibling-walk
+  gap classification is impossible there; the source index is required.
+- `IdentityPrinter` mangles `HTMLConditionalOpenTagNode` (loses open-tag
+  whitespace) — never fall back to it for those.
+- The corpus/report live in the session scratchpad (`corpus.jsonl`,
+  `report.json`); regenerate with the two commands at the top of
+  DOC-IR-DIVERGENCES.md.
