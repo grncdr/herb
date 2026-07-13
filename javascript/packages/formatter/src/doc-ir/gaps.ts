@@ -34,9 +34,11 @@ export interface SourcePosition {
   column: number
 }
 
-/** Resolves parser positions (line/column) to offsets into the source. */
+/** Resolves parser positions (1-based line, 0-based UTF-8 byte column) to
+ *  character offsets into the source. */
 export class SourceIndex {
   private lineStarts: number[]
+  private lines: string[]
 
   constructor(private source: string) {
     this.lineStarts = [0]
@@ -44,14 +46,38 @@ export class SourceIndex {
     for (let i = 0; i < source.length; i++) {
       if (source[i] === "\n") this.lineStarts.push(i + 1)
     }
+
+    this.lines = source.split("\n")
+  }
+
+  /** Parser columns count UTF-8 bytes; convert to a character column. */
+  private charColumn(lineText: string, byteColumn: number): number {
+    // Fast path: ASCII line — byte column equals character column.
+    // eslint-disable-next-line no-control-regex
+    if (!/[^\x00-\x7f]/.test(lineText)) return byteColumn
+
+    let bytes = 0
+
+    for (let chars = 0; chars < lineText.length; chars++) {
+      if (bytes >= byteColumn) return chars
+
+      const code = lineText.codePointAt(chars)!
+
+      bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4
+
+      if (code > 0xffff) chars++ // surrogate pair occupies two UTF-16 units
+    }
+
+    return lineText.length
   }
 
   offsetOf(position: SourcePosition): number | null {
     const lineStart = this.lineStarts[position.line - 1]
+    const lineText = this.lines[position.line - 1]
 
-    if (lineStart === undefined) return null
+    if (lineStart === undefined || lineText === undefined) return null
 
-    return lineStart + position.column
+    return lineStart + this.charColumn(lineText, position.column)
   }
 
   /** The source text between two positions, or null when it cannot be

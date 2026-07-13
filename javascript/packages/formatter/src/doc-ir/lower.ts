@@ -232,8 +232,17 @@ export class Lowerer {
 
   // --- Child sequences ---
 
-  private isFlowItem(node: Node): boolean {
+  /** ERB tags that render as a single atomic tag (no body of their own). */
+  private isERBLeaf(node: Node): boolean {
     if (isNode(node, ERBContentNode)) return !isHerbDisableComment(node)
+    if (isNode(node, ERBYieldNode)) return true
+    if (isNode(node, ERBRenderNode)) return !node.end_node
+
+    return false
+  }
+
+  private isFlowItem(node: Node): boolean {
+    if (this.isERBLeaf(node)) return true
     if (isNode(node, HTMLTextNode)) return true
     if (isNode(node, HTMLElementNode) && isInlineElement(getTagName(node))) return true
 
@@ -394,6 +403,17 @@ export class Lowerer {
 
           for (let runIndex = index; runIndex < end; runIndex++) {
             const runGap = gaps[runIndex]
+
+            // A non-glued <br>/<hr> also starts fresh: it sits at the start
+            // of a line when the flow is broken (glued ones like `,<br>`
+            // stay attached — that's #469).
+            if (isLineBreakingElement(items[runIndex]) && runIndex > index && !afterFlowBreak && runGap !== "glued") {
+              flushBuilder()
+              out.push(line)
+              currentBuilder = new FillBuilder()
+              afterFlowBreak = true
+            }
+
             const separator = runIndex === index || afterFlowBreak || runGap === "glued" ? null : line
 
             this.addUnitsToBuilder(currentBuilder!, items[runIndex], separator, true)
@@ -422,14 +442,14 @@ export class Lowerer {
       let merge: Doc | null = null
 
       if (previous && currentBuilder?.hasContent) {
-        if (mode === "control-flow") {
-          if (gap === "glued" && (isNode(item, HTMLTextNode) || isNode(item, ERBContentNode) || (isNode(item, HTMLElementNode) && isInlineElement(getTagName(item))))) {
+        if (mode === "control-flow" || mode === "attributes") {
+          if (gap === "glued" && (isNode(item, HTMLTextNode) || this.isERBLeaf(item) || (isNode(item, HTMLElementNode) && isInlineElement(getTagName(item))))) {
             merge = ""
           }
         } else {
-          const previousIsInlineAtom = isNode(previous, ERBContentNode) || (isNode(previous, HTMLElementNode) && isInlineElement(getTagName(previous)))
+          const previousIsInlineAtom = this.isERBLeaf(previous) || (isNode(previous, HTMLElementNode) && isInlineElement(getTagName(previous)))
 
-          if (isNode(item, ERBContentNode) && (gap === "glued" || gap === "space")) {
+          if (this.isERBLeaf(item) && (gap === "glued" || gap === "space")) {
             merge = gap === "space" ? " " : ""
           } else if (gap === "glued" && previousIsInlineAtom && (isNode(item, HTMLTextNode) || (isNode(item, HTMLElementNode) && isInlineElement(getTagName(item))))) {
             merge = ""
@@ -776,12 +796,13 @@ export class Lowerer {
       if (node.is_void && !node.close_tag) return openDoc
 
       if (isContentPreserving(node)) {
-        // The current formatter never wraps the open tag of a
-        // content-preserving element; breaking near preserved content is
-        // fragile, so keep it flat regardless of width.
+        // Keep the open tag flat when it fits on its own (breaking next to
+        // preserved content is fragile); a genuinely over-long tag still
+        // wraps, like the current formatter's script/style tags.
         const flatOpen = this.renderFlat(openDoc)
+        const open = flatOpen !== null && flatOpen.length <= this.options.maxLineLength ? flatOpen : openDoc
 
-        return [flatOpen ?? openDoc, this.lowerPreservedBody(node.body), closeDoc]
+        return [open, this.lowerPreservedBody(node.body), closeDoc]
       }
 
       const body = this.lowerChildren(node.body, "element", {
@@ -809,8 +830,13 @@ export class Lowerer {
         ? node.open_tag.location.end.line !== node.close_tag.location.start.line
         : !this.isSingleSourceLine(node)
 
+      // Block-level child elements always put the parent body on its own
+      // lines (matching the current formatter's element layout).
+      const hasBlockChild = classifyChildren(node.body, this.gapContext()).items
+        .some(child => isNode(child, HTMLElementNode) && !isInlineElement(getTagName(child)))
+
       const collapseEligible = body.singleFillRun && (body.leadingGap === "glued" || body.leadingGap === "space")
-      const forceBreak = !inline && authoredMultiline && !collapseEligible
+      const forceBreak = (!inline && authoredMultiline && !collapseEligible) || hasBlockChild
 
       return group([
         openDoc,
@@ -872,14 +898,39 @@ export class Lowerer {
       return `<${tagName}${selfClosing ? " />" : ">"}`
     }
 
-    const parts = significant.map(child => {
-      if (isNode(child, HTMLAttributeNode)) return this.lowerAttribute(child, tagName)
+    const parts: Doc[][] = []
+    const leadingSuffixes: Doc[] = []
 
-      return this.lowerNode(child)
-    })
+    for (const child of significant) {
+      // herb:disable comments in the open tag stay on the line of what they
+      // annotate (the preceding attribute, or the tag itself), so the
+      // directive keeps applying to that output line when the tag breaks.
+      if (isHerbDisableComment(child)) {
+        const suffix = lineSuffix(" " + IdentityPrinter.print(child).trim())
+
+        if (parts.length === 0) {
+          leadingSuffixes.push(suffix)
+        } else {
+          parts[parts.length - 1].push(suffix)
+        }
+
+        continue
+      }
+
+      if (isNode(child, HTMLAttributeNode)) {
+        parts.push([this.lowerAttribute(child, tagName)])
+      } else {
+        parts.push([this.lowerNode(child)])
+      }
+    }
+
+    if (parts.length === 0) {
+      return [`<${tagName}`, ...leadingSuffixes, selfClosing ? " />" : ">"]
+    }
 
     return group([
       `<${tagName}`,
+      ...leadingSuffixes,
       indent([line, join(line, parts)]),
       selfClosing ? [line, "/>"] : [softline, ">"],
     ])
