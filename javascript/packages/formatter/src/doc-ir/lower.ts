@@ -95,7 +95,7 @@ interface Boundaries {
   closeStart?: SourcePosition
 }
 
-type ChildMode = "element" | "control-flow"
+type ChildMode = "element" | "control-flow" | "attributes"
 
 interface LoweredChildren {
   /** Doc for the children (parts joined with separators); "" when empty. */
@@ -134,6 +134,20 @@ function tagOpenEnd(node: ERBTagLike | null | undefined): SourcePosition | undef
 
 function tagCloseStart(node: ERBTagLike | null | undefined): SourcePosition | undefined {
   return node?.tag_opening?.location?.start
+}
+
+function containsLineSuffix(doc: Doc): boolean {
+  if (typeof doc === "string") return false
+  if (Array.isArray(doc)) return doc.some(containsLineSuffix)
+
+  switch (doc.type) {
+    case "lineSuffix": return true
+    case "group":
+    case "indent": return containsLineSuffix(doc.contents)
+    case "fill": return doc.parts.some(containsLineSuffix)
+    case "ifBreak": return containsLineSuffix(doc.breakContents) || containsLineSuffix(doc.flatContents)
+    default: return false
+  }
 }
 
 /**
@@ -219,7 +233,7 @@ export class Lowerer {
   // --- Child sequences ---
 
   private isFlowItem(node: Node): boolean {
-    if (isNode(node, ERBContentNode)) return true
+    if (isNode(node, ERBContentNode)) return !isHerbDisableComment(node)
     if (isNode(node, HTMLTextNode)) return true
     if (isNode(node, HTMLElementNode) && isInlineElement(getTagName(node))) return true
 
@@ -254,9 +268,12 @@ export class Lowerer {
 
   /**
    * Render a doc flat (no width constraint). Returns null if it still
-   * contains newlines (hard breaks), i.e. it cannot be an atom.
+   * contains newlines (hard breaks) or defers content via lineSuffix —
+   * those cannot be baked into an atom.
    */
   private renderFlat(doc: Doc): string | null {
+    if (containsLineSuffix(doc)) return null
+
     const rendered = printDocToString(doc, { indentWidth: this.options.indentWidth, maxLineLength: Number.MAX_SAFE_INTEGER })
 
     return rendered.includes("\n") ? null : rendered
@@ -316,9 +333,11 @@ export class Lowerer {
     }
 
     const blockSeparator = (gap: GapKind): Doc => {
-      if (mode === "control-flow") {
+      if (mode === "control-flow" || mode === "attributes") {
         switch (gap) {
-          case "glued": return softline
+          // In attribute position, glued source (`id="a"<% if %>`) would
+          // render invalid HTML; normalize to a breakable space.
+          case "glued": return mode === "attributes" ? line : softline
           case "space": return line
           case "blank": return [hardline, hardline]
           default: return hardline
@@ -334,8 +353,11 @@ export class Lowerer {
       const item = items[index]
       const gap = gaps[index]
 
-      // herb:disable comments become line suffixes at their anchor's line.
-      if (isHerbDisableComment(item)) {
+      // herb:disable comments authored on the same line as their anchor
+      // become line suffixes there; ones on their own line stay put. A
+      // leading comment only has an anchor when the parent has an opening
+      // construct (element open tag, control-flow tag) on its line.
+      if (isHerbDisableComment(item) && (gap === "glued" || gap === "space") && (sawNonSuffix || boundaries.openEnd)) {
         const suffix = lineSuffix(" " + IdentityPrinter.print(item).trim())
 
         if (!sawNonSuffix) {
@@ -455,6 +477,7 @@ export class Lowerer {
     if (isNode(node, XMLDeclarationNode)) return literalText(IdentityPrinter.print(node))
     if (isNode(node, CDATANode)) return literalText(IdentityPrinter.print(node))
     if (isNode(node, HTMLConditionalElementNode)) return this.lowerConditionalElement(node)
+    if (isNode(node, HTMLConditionalOpenTagNode)) return node.conditional ? this.lowerNode(node.conditional) : ""
     if (isNode(node, ERBContentNode)) return isERBCommentNode(node) ? this.lowerERBComment(node) : this.erbTagDoc(node)
     if (isNode(node, ERBOpenTagNode)) return this.erbTagDoc(node)
     if (isNode(node, ERBEndNode)) return this.erbTagDoc(node)
@@ -492,11 +515,15 @@ export class Lowerer {
 
     const trimmed = content.trim()
 
+    // An empty tag keeps one inner space: `<%%>` would parse as the ERB
+    // literal-escape `<%%` (and is not a formatting fixpoint).
+    if (!trimmed) return open + " " + close
+
     // See https://github.com/marcoroth/herb/issues/476 — heredocs keep the
     // closing tag on its own line.
     const suffix = trimmed.startsWith("<<") ? "\n" : " "
 
-    return open + (trimmed ? ` ${trimmed}${suffix}` : "") + close
+    return open + ` ${trimmed}${suffix}` + close
   }
 
   private erbTagDoc(node: ERBTagLike): Doc {
@@ -504,9 +531,15 @@ export class Lowerer {
   }
 
   private lowerERBComment(node: ERBContentNode): Doc {
+    const content = node?.content?.value || ""
+
+    if (!content.trim()) {
+      return (node.tag_opening?.value || "<%#") + " " + (node.tag_closing?.value || "%>")
+    }
+
     const result = formatERBCommentLines(
       node.tag_opening?.value || "<%#",
-      node?.content?.value || "",
+      content,
       node.tag_closing?.value || "%>",
     )
 
@@ -522,9 +555,9 @@ export class Lowerer {
 
   // --- Control flow ---
 
-  private mapBoundaryGap(gap: GapKind): Doc {
+  private mapBoundaryGap(gap: GapKind, attributes = false): Doc {
     switch (gap) {
-      case "glued": return softline
+      case "glued": return attributes ? line : softline
       case "space": return line
       default: return hardline
     }
@@ -533,17 +566,20 @@ export class Lowerer {
   /**
    * A control-flow segment: opening tag, indented statements, positioned so
    * subsequent clause tags (elsif/else/end) sit at the tag's own level.
+   * Attribute-position segments normalize glued boundaries to spaces —
+   * glued source would render invalid HTML around the attribute.
    */
   private controlFlowSegment(tag: Doc, statements: Node[], boundaries: Boundaries = {}): { parts: Doc[], trailingSeparator: Doc } {
-    const body = this.lowerChildren(statements, "control-flow", boundaries)
+    const attributes = statements.some(child => isNode(child, HTMLAttributeNode))
+    const body = this.lowerChildren(statements, attributes ? "attributes" : "control-flow", boundaries)
 
     if (body.empty) {
-      return { parts: [tag, ...body.leadingSuffixes], trailingSeparator: this.mapBoundaryGap(body.trailingGap) }
+      return { parts: [tag, ...body.leadingSuffixes], trailingSeparator: this.mapBoundaryGap(body.trailingGap, attributes) }
     }
 
     return {
-      parts: [tag, ...body.leadingSuffixes, indent([this.mapBoundaryGap(body.leadingGap), body.doc])],
-      trailingSeparator: this.mapBoundaryGap(body.trailingGap),
+      parts: [tag, ...body.leadingSuffixes, indent([this.mapBoundaryGap(body.leadingGap, attributes), body.doc])],
+      trailingSeparator: this.mapBoundaryGap(body.trailingGap, attributes),
     }
   }
 
@@ -655,29 +691,41 @@ export class Lowerer {
   private lowerCase(node: ERBCaseNode | ERBCaseMatchNode): Doc {
     const parts: Doc[] = [this.erbTagDoc(node)]
 
-    const lead = this.lowerChildren(node.children, "control-flow", {
-      openEnd: tagOpenEnd(node),
-      closeStart: tagCloseStart(node.conditions[0] as unknown as ERBTagLike ?? node.else_clause ?? node.end_node),
-    })
-
-    if (!lead.empty) {
-      parts.push(indent([hardline, lead.doc]))
-    }
+    const clauses: { tag: ERBTagLike, statements: Node[] }[] = []
 
     for (const condition of node.conditions) {
-      parts.push(hardline, this.lowerNode(condition))
+      const clause = condition as unknown as { statements?: Node[] } & ERBTagLike
+
+      clauses.push({ tag: clause, statements: clause.statements ?? [] })
     }
 
     if (node.else_clause) {
-      const segment = this.controlFlowSegment(this.erbTagDoc(node.else_clause), node.else_clause.statements, {
-        openEnd: tagOpenEnd(node.else_clause),
-        closeStart: tagCloseStart(node.end_node),
-      })
-
-      parts.push(hardline, segment.parts)
+      clauses.push({ tag: node.else_clause, statements: node.else_clause.statements })
     }
 
-    if (node.end_node) parts.push(hardline, this.erbTagDoc(node.end_node))
+    const firstBoundary = (clauses[0]?.tag ?? node.end_node) as ERBTagLike | null
+    const lead = this.lowerChildren(node.children, "control-flow", {
+      openEnd: tagOpenEnd(node),
+      closeStart: tagCloseStart(firstBoundary),
+    })
+
+    if (!lead.empty) {
+      parts.push(...lead.leadingSuffixes, indent([this.mapBoundaryGap(lead.leadingGap), lead.doc]))
+    }
+
+    parts.push(this.mapBoundaryGap(lead.trailingGap))
+
+    clauses.forEach((clause, index) => {
+      const next = (clauses[index + 1]?.tag ?? node.end_node) as ERBTagLike | null
+      const segment = this.controlFlowSegment(this.erbTagDoc(clause.tag), clause.statements, {
+        openEnd: tagOpenEnd(clause.tag),
+        closeStart: tagCloseStart(next),
+      })
+
+      parts.push(...segment.parts, segment.trailingSeparator)
+    })
+
+    if (node.end_node) parts.push(this.erbTagDoc(node.end_node))
 
     return group(parts)
   }
@@ -728,7 +776,12 @@ export class Lowerer {
       if (node.is_void && !node.close_tag) return openDoc
 
       if (isContentPreserving(node)) {
-        return [openDoc, this.lowerPreservedBody(node.body), closeDoc]
+        // The current formatter never wraps the open tag of a
+        // content-preserving element; breaking near preserved content is
+        // fragile, so keep it flat regardless of width.
+        const flatOpen = this.renderFlat(openDoc)
+
+        return [flatOpen ?? openDoc, this.lowerPreservedBody(node.body), closeDoc]
       }
 
       const body = this.lowerChildren(node.body, "element", {
@@ -745,7 +798,11 @@ export class Lowerer {
       const boundary = (gap: GapKind): Doc => {
         if (!inline) return softline
 
-        return gap === "glued" ? softline : line
+        // Whitespace-sensitive: a glued boundary of an inline element must
+        // never break — a newline there would add rendered whitespace. An
+        // over-long line is the lesser evil (same trade-off as the current
+        // formatter's inline rendering).
+        return gap === "glued" ? "" : line
       }
 
       const authoredMultiline = node.open_tag && node.close_tag
@@ -879,6 +936,16 @@ export class Lowerer {
       const normalized = content.replace(ANY_WHITESPACE, " ").trim()
 
       if (name === "class" && !ERB_VALUE.test(normalized)) {
+        // A long class value authored across several lines keeps its
+        // authored line structure (matches the current formatter).
+        if (/\r?\n/.test(content) && normalized.length > 80) {
+          const lines = content.split(/\r?\n/).map(valueLine => valueLine.trim()).filter(Boolean)
+
+          if (lines.length > 1) {
+            return [name, equals, group([openQuote, indent([hardline, join(hardline, lines)]), hardline, closeQuote])]
+          }
+        }
+
         const tokens = normalized.split(" ").filter(Boolean)
 
         if (tokens.length > 1) {

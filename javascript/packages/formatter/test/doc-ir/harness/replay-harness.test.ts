@@ -46,8 +46,10 @@ const HARNESS_ENABLED = !!process.env.RUN_DOC_IR_HARNESS
 function signature(node: unknown): unknown {
   if (node === null || node === undefined) return null
 
-  if (isToken(node as never)) {
-    return (node as { value: string }).value.trim()
+  const maybeToken = node as { type?: unknown, value?: unknown }
+
+  if (isToken(node as never) || (typeof maybeToken.type === "string" && maybeToken.type.startsWith("TOKEN_") && typeof maybeToken.value === "string")) {
+    return String((node as { value: string }).value).replace(/[ \t\n\r]+/g, " ").trim()
   }
 
   if (Array.isArray(node)) {
@@ -77,7 +79,7 @@ function signature(node: unknown): unknown {
   const result: Record<string, unknown> = {}
 
   for (const [key, value] of Object.entries(anyNode)) {
-    if (key === "location" || key === "errors" || key === "prism_node" || key === "element_source" || key === "range") continue
+    if (key === "location" || key === "errors" || key === "prism_node" || key === "element_source" || key === "range" || key === "source") continue
 
     if (isNode(anyNode, HTMLAttributeValueNode) && (key === "open_quote" || key === "close_quote")) {
       result[key] = value ? '"' : null
@@ -145,6 +147,7 @@ describe.skipIf(!HARNESS_ENABLED)("doc-ir replay harness", () => {
     const reparseSamples: Sample[] = []
 
     let currentReparseDiff = 0
+    let spikeOnlyReparseDiff = 0
 
     let currentTotalMs = 0
     let spikeTotalMs = 0
@@ -229,28 +232,35 @@ describe.skipIf(!HARNESS_ENABLED)("doc-ir replay harness", () => {
             idempotencySamples.push({ source: entry.source, current: spike, spike: second })
           }
         }
-      } catch {
+      } catch (error) {
         notIdempotent++
+
+        if (idempotencySamples.length < SAMPLE_CAP) {
+          idempotencySamples.push({ source: entry.source, current: spike, error: String(error) })
+        }
       }
 
       // Reparse equality: spike output parses to the same structure as source.
       const sourceSig = signatureString(entry.source)
       const spikeSig = signatureString(spike)
+      const currentSig = signatureString(current)
+      const spikeEqual = sourceSig !== null && sourceSig === spikeSig
+      const currentEqual = sourceSig !== null && sourceSig === currentSig
 
-      if (sourceSig !== null && sourceSig === spikeSig) {
-        reparseEqual++
-      } else {
-        reparseDiff++
+      if (spikeEqual) reparseEqual++
+      else reparseDiff++
+
+      if (!currentEqual) currentReparseDiff++
+
+      // Spike-only reparse differences are the true regression candidates:
+      // structural changes the current formatter does not make.
+      if (!spikeEqual && currentEqual) {
+        spikeOnlyReparseDiff++
 
         if (reparseSamples.length < SAMPLE_CAP) {
-          reparseSamples.push({ source: entry.source, spike })
+          reparseSamples.push({ source: entry.source, current, spike })
         }
       }
-
-      // Baseline: does the current formatter's output reparse-equal the source?
-      const currentSig = signatureString(current)
-
-      if (sourceSig === null || sourceSig !== currentSig) currentReparseDiff++
     }
 
     const compared = counts["exact"] + counts["blank-only"] + counts["layout-only"] + counts["content-diff"]
@@ -267,6 +277,7 @@ describe.skipIf(!HARNESS_ENABLED)("doc-ir replay harness", () => {
       reparseEqual,
       reparseDiff,
       currentReparseDiff,
+      spikeOnlyReparseDiff,
       currentTotalMs: Math.round(currentTotalMs),
       spikeTotalMs: Math.round(spikeTotalMs),
       samples,
