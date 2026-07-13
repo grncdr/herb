@@ -22,9 +22,10 @@ import dedent from "dedent"
 //                        output and keeps CI green until it is fixed. When the
 //                        bug is fixed the `.fails` starts failing; drop it then.
 //
-// NOTE: labels were verified against a local `vitest run`. Most closed issues
-// pass as regression guards; #1729 (open) and the #609 inline `tag.span do`
-// variant still reproduce and are marked `test.fails`.
+// NOTE: labels were verified against a local `vitest run`. The two remaining
+// `test.fails` cases (the inline-`if`-in-text case of #1729 and the inline
+// `tag.span do` block of #609) are deferred behind architectural changes
+// documented in DEV-JOURNAL.md at the repo root.
 
 let formatter: Formatter
 let expectFormattedToMatch: ReturnType<typeof createExpectFormattedToMatch>
@@ -56,6 +57,11 @@ describe("@herb-tools/formatter - whitespace preservation", () => {
       `)
     })
 
+    // DEFERRED (see DEV-JOURNAL.md): an inline `<% if %>...<% end %>` embedded
+    // mid-text still gets pulled onto its own line, which reintroduces a
+    // rendered space in the falsy branch (`Hello!` -> `Hello !`). A correct fix
+    // needs the text-flow engine to render control-flow nodes as inline atomic
+    // units — a larger, separately-scoped change.
     test.fails("keeps inline if content on one visual line", () => {
       expectFormattedToMatch(dedent`
         <p>
@@ -152,8 +158,11 @@ describe("@herb-tools/formatter - whitespace preservation", () => {
       `)
     })
 
-    // Still reproduces on main: the inline do/end block is expanded onto
-    // multiple lines, changing the rendered whitespace.
+    // DEFERRED (see DEV-JOURNAL.md): the inline `do`/`end` block is expanded
+    // onto multiple lines. This is a documented, parser-blocked limitation
+    // (`tag.span do` must first be transformed into an HTMLElementNode); see the
+    // TODO in test/html/text-content.test.ts which asserts the current
+    // multiline output. A formatter-only fix would contradict that spec.
     test.fails("does not expand an inline tag.span block", () => {
       expectFormattedToMatch(dedent`
         <%= tag.span do %>This should stay on one line<% end %>
