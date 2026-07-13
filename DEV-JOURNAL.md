@@ -107,3 +107,62 @@ touched.
   right and the test expectations were wrong. `fits()` measures against
   `maxLineLength` inclusive (a line of exactly 80 cols is legal), matching the
   current formatter's `<=` checks.
+
+## gaps.ts + lower.ts + harness (iteration log)
+
+Corpus: instrument `Formatter.format` during a full suite run (971 unique
+inputs); replay both printers per input, categorize diffs, check idempotency
+and reparse-equality (structural signature, whitespace/quote/ERB-spacing
+normalized). Key metric additions: `spikeOnlyReparseDiff` (inputs where the
+spike changes parse structure but the current formatter doesn't — the true
+regression list) and a current-formatter reparse baseline (~140/860 inputs
+reparse-differ under the current formatter too, all text-edge whitespace at
+block boundaries).
+
+Bugs found by the harness, in order:
+
+1. **Parser drops whitespace nodes inside open tags** (`<div <% if %> a="1"`):
+   sibling-walk classification saw everything glued. Fix: classifier reads
+   the source text between node locations (lines 1-based, columns 0-based);
+   sibling walk stays as fallback. This is why `LowerOptions.source` exists.
+2. **Punctuation gluing was wrong**: current formatter *preserves* `Lorem .`
+   (space before punctuation); my always-glue rule over-applied. Source gaps
+   decide; no punctuation special-case at all.
+3. **Inline elements inside fill runs must be atoms**: a too-long
+   `<strong>…</strong>` was breaking internally mid-flow. Atoms render flat
+   (unbounded width) unless they contain hard breaks or lineSuffixes.
+4. **`<br>`/`<hr>` end the visual line**: split the fill at line-breaking
+   elements, joined with group-mode separators (breaks when the paragraph
+   breaks, keeps authored spacing when it fits inline).
+5. **`<%%>` hazard**: empty ERB tags must keep one inner space — `<%%>` is
+   the ERB literal-escape and wasn't a formatting fixpoint (the current
+   formatter emits `<%%>`; the spike diverges deliberately).
+6. **HTMLConditionalOpenTagNode** fell through to IdentityPrinter, which
+   mangles it (`<divclass="a">` — whitespace nodes are gone). Lowered via its
+   inner conditional; the generic if-lowering produces exactly the expected
+   shape.
+7. **Whitespace-sensitivity at inline-element boundaries**: glued boundaries
+   of inline elements must never break (a newline there adds rendered
+   whitespace). They lower to plain concatenation; over-long lines are the
+   lesser evil (same trade-off as the current formatter).
+8. **case/when hardcoded hardlines** broke authored-inline
+   `<span><% case %>…</span>` (rendering change). Now gap-driven like
+   if/else; multiline-authored cases still produce the classic layout.
+9. **herb:disable placement**: same-source-line comments become lineSuffixes
+   (they land at the end of whatever line their anchor ends up on — including
+   after a broken open tag's `>`); own-line comments stay put and never join
+   fill runs; leading suffixes require an opening anchor (document-level
+   `herb:disable` headers stay at the top). lineSuffix docs are never baked
+   into flattened atoms.
+10. **Attribute-position control flow normalizes glued boundaries to spaces**:
+    `id="a"<% if %>class=…` would render invalid HTML; the current formatter
+    repairs this and so do we.
+11. **Authored multi-line class values** (>80 normalized) keep their authored
+    line structure, matching `formatClassAttribute`; width-driven token
+    wrapping applies otherwise.
+
+Harness snapshot after these fixes: 81.7% exact, 89.5% exact+blank-only-diff,
+0 idempotency failures, 1 spike-only reparse diff (a case where the *current*
+formatter under-measures conditional attributes and emits a 90-col line; the
+spike breaks the body instead — rendering-equivalent for a block element).
+Spike is ~20% faster than the current printer on the corpus.
