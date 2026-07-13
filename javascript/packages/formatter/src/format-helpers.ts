@@ -271,6 +271,40 @@ export function shouldAppendToLastLine(child: Node, siblings: Node[], index: num
 }
 
 /**
+ * Stricter sibling-adjacency check used when rendering ERB control-flow
+ * statements (if/elsif/else), where each statement is otherwise placed on its
+ * own line.
+ *
+ * Returns true only when `child` is directly adjacent to the previous
+ * significant sibling in the source with no whitespace between them, so that
+ * constructs like `<%= name %>'s dog` or `<%= greeting %>,<br>` stay on one
+ * line. Unlike `shouldAppendToLastLine`, it never treats a node separated by a
+ * newline as adjacent (a preceding text node ending in whitespace, or an
+ * intervening whitespace-only node, both disqualify), which preserves
+ * one-ERB-output-per-line formatting (see #1210).
+ */
+export function isSourceAdjacentToPrevious(siblings: Node[], index: number): boolean {
+  if (index === 0) return false
+
+  const child = siblings[index]
+
+  if (isNode(child, HTMLElementNode) && !isInlineElement(getTagName(child))) return false
+  if (isNode(child, HTMLTextNode) && /^\s/.test(child.content)) return false
+
+  for (let i = index - 1; i >= 0; i--) {
+    const previous = siblings[i]
+
+    if (isNode(previous, WhitespaceNode)) continue
+    if (isPureWhitespaceNode(previous)) return false
+    if (isNode(previous, HTMLTextNode) && /\s$/.test(previous.content)) return false
+
+    return true
+  }
+
+  return false
+}
+
+/**
  * Check if user-intentional spacing should be preserved (double newlines between elements)
  */
 export function shouldPreserveUserSpacing(child: Node, siblings: Node[], index: number): boolean {

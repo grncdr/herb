@@ -46,6 +46,7 @@ import {
   isInlineElement,
   isNonWhitespaceNode,
   shouldAppendToLastLine,
+  isSourceAdjacentToPrevious,
   shouldPreserveUserSpacing,
 } from "./format-helpers.js"
 
@@ -725,7 +726,7 @@ export class FormatPrinter extends Printer implements TextFlowDelegate, Attribut
    *
    * Tracks line positions and immediately splices blank lines after rendering each child.
    */
-  private visitElementChildren(body: Node[], parentElement: HTMLElementNode | null) {
+  private visitElementChildren(body: Node[], parentElement: HTMLElementNode | null, elementBodyMode = true) {
     let lastMeaningfulNode: Node | null = null
     let hasHandledSpacing = false
 
@@ -749,7 +750,9 @@ export class FormatPrinter extends Printer implements TextFlowDelegate, Attribut
 
       if (!isNonWhitespaceNode(child)) continue
 
-      const textFlowResult = this.visitTextFlowRunInChildren(body, index, lastMeaningfulNode, hasHandledSpacing)
+      const textFlowResult = elementBodyMode
+        ? this.visitTextFlowRunInChildren(body, index, lastMeaningfulNode, hasHandledSpacing)
+        : null
 
       if (textFlowResult) {
         index = textFlowResult.newIndex
@@ -758,7 +761,11 @@ export class FormatPrinter extends Printer implements TextFlowDelegate, Attribut
         continue
       }
 
-      if (shouldAppendToLastLine(child, body, index)) {
+      const appendable = elementBodyMode
+        ? shouldAppendToLastLine(child, body, index)
+        : isSourceAdjacentToPrevious(body, index)
+
+      if (appendable) {
         this.appendChildToLastLine(child, body, index)
         lastMeaningfulNode = child
         hasHandledSpacing = false
@@ -768,7 +775,7 @@ export class FormatPrinter extends Printer implements TextFlowDelegate, Attribut
       const childStartLine = this.stringLineCount
       this.visit(child)
 
-      if (lastMeaningfulNode && !hasHandledSpacing) {
+      if (elementBodyMode && lastMeaningfulNode && !hasHandledSpacing) {
         const shouldAddSpacing = this.spacingAnalyzer.shouldAddSpacingBetweenSiblings(parentElement, body, index)
 
         if (shouldAddSpacing) {
@@ -1052,6 +1059,23 @@ export class FormatPrinter extends Printer implements TextFlowDelegate, Attribut
     })
   }
 
+  /**
+   * Render the statements of an ERB control-flow node (if/elsif/else).
+   *
+   * Renders one statement per line, but appends text/inline content that is
+   * directly adjacent (no whitespace in the source) to the preceding node onto
+   * the same line. This keeps constructs like `<%= user.name %>'s dog` or
+   * `<%= greeting %>,<br>` intact instead of splitting the trailing text onto
+   * its own line (which would insert rendered whitespace).
+   *
+   * Text-flow run collection is intentionally disabled: unlike HTML element
+   * bodies, ERB control-flow statements preserve their line structure, so
+   * whitespace-separated ERB outputs stay on separate lines (see #1210).
+   */
+  private visitControlFlowBody(body: Node[]) {
+    this.visitElementChildren(body, null, false)
+  }
+
   visitERBBlockNode(node: ERBBlockNode) {
     this.trackBoundary(node, () => {
       this.printERBNode(node)
@@ -1111,7 +1135,7 @@ export class FormatPrinter extends Printer implements TextFlowDelegate, Attribut
         this.printERBNode(node)
 
         this.withIndent(() => {
-          this.visitAll(node.statements)
+          this.visitControlFlowBody(node.statements)
         })
 
         if (node.subsequent) this.visit(node.subsequent)
@@ -1126,7 +1150,7 @@ export class FormatPrinter extends Printer implements TextFlowDelegate, Attribut
     if (this.inlineMode) {
       this.visitAll(node.statements)
     } else {
-      this.withIndent(() => this.visitAll(node.statements))
+      this.withIndent(() => this.visitControlFlowBody(node.statements))
     }
   }
 

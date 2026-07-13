@@ -45,7 +45,7 @@ describe("@herb-tools/formatter - whitespace preservation", () => {
   // Newlines added inside control-flow/blocks push trailing text (`'s dog`, `!`)
   // onto its own line, rendering an extra space.
   describe("issue #1729 - newlines produce undesired whitespace", () => {
-    test.fails("keeps text glued to an output tag inside an if block", () => {
+    test("keeps text glued to an output tag inside an if block", () => {
       expectFormattedToMatch(dedent`
         <p>
           Hello
@@ -67,7 +67,7 @@ describe("@herb-tools/formatter - whitespace preservation", () => {
 
     // @grncdr: only triggered by blocks / flow control; identical content at the
     // top level formats correctly.
-    test.fails("keeps a comma attached to the ERB tag inside a block", () => {
+    test("keeps a comma attached to the ERB tag inside a block", () => {
       expectFormattedToMatch(dedent`
         <% if something? %>
           <%= @user.preferred_greeting %>,<br>
