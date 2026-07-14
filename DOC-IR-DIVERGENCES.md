@@ -6,7 +6,19 @@ Companion to DOC-IR-DESIGN.md. Produced by the validation harness
 
 Date: 2026-07-13. Spike code: `javascript/packages/formatter/src/doc-ir/`.
 
-## Reproduce
+**Status update (2026-07-14):** the Doc-IR printer is now wired in as *the*
+printer (`Formatter.format` → `printWithDocIR`) and the replaced modules are
+deleted. The numbers below were measured against the old `FormatPrinter`
+before its deletion; the comparison harness that produced them lives in git
+history (the current `replay-harness.test.ts` is a reduced quality gate:
+idempotency + reparse-equality only). The divergences now manifest as **137
+failing fixture expectations across 33 test files** — every one falls into a
+category below and awaits the §9.1 arbitration before the fixtures are
+re-cut. The `test.fails` marker for #609 (`tag.span do`) is flipped to a
+passing test; #1729 Case B renders correctly and only its exact-match
+expectation remains open (§C / reflow at exactly 80 columns).
+
+## Reproduce (as originally measured)
 
 ```sh
 cd javascript/packages/formatter
@@ -14,7 +26,8 @@ cd javascript/packages/formatter
 # 1. Capture the corpus (instruments Formatter.format during the full suite)
 CORPUS_FILE=/tmp/corpus.jsonl yarn vitest run --config vitest.corpus.config.ts
 
-# 2. Replay both printers and write the report
+# 2. Replay and write the report (originally: both printers compared;
+#    now: idempotency + reparse-equality gate)
 RUN_DOC_IR_HARNESS=1 CORPUS_FILE=/tmp/corpus.jsonl REPORT_FILE=/tmp/report.json \
   yarn vitest run test/doc-ir/harness/replay-harness.test.ts
 ```

@@ -192,6 +192,24 @@ positive expectations in `test/doc-ir/lower.test.ts`. Full formatter suite
 the spike lives entirely under `src/doc-ir/` behind its own entry point
 (`printWithDocIR`).
 
+## Wired in + old printer deleted (2026-07-14)
+
+On request, the Doc-IR printer replaced the string-emission printer outright
+(design §9.4): `Formatter.format` now calls `printWithDocIR`; deleted
+`format-printer.ts`, `text-flow-{engine,analyzer,helpers}.ts`,
+`spacing-analyzer.ts`, `attribute-renderer.ts`, `herb-disable-collector.ts`
+and their unit tests (~3.7k lines); `format-helpers.ts` trimmed to constants
++ pure element predicates (~120 lines). `tsc --noEmit` clean. The replay
+harness lost its comparison target and is now an idempotency/reparse gate.
+
+Suite: 904 passing, **137 failing fixture expectations across 33 files** —
+spot-checked clusters (unicode, herb-formatter-ignore, xml) all land in
+DOC-IR-DIVERGENCES.md categories (blank-line insertion and herb:disable
+splice-reordering dominate). Fixtures are deliberately NOT re-cut: that is
+the §9.1 maintainer arbitration. The #609 `test.fails` flipped to a passing
+test; #1729 Case B is rendering-correct with only the exact-match reflow
+question open.
+
 Things a future session should know:
 - Parser locations: lines 1-based, columns 0-based **UTF-8 bytes**.
 - Whitespace nodes inside open tags are dropped by the parser — sibling-walk

@@ -1,4 +1,4 @@
-import { FormatPrinter } from "./format-printer.js"
+import { printWithDocIR } from "./doc-ir/lower.js"
 
 import { isScaffoldTemplate } from "./scaffold-template-detector.js"
 import { resolveFormatOptions } from "./options.js"
@@ -88,7 +88,11 @@ export class Formatter {
       }
     }
 
-    let formatted = new FormatPrinter(source, resolvedOptions).print(node)
+    let formatted = printWithDocIR(node, {
+      indentWidth: resolvedOptions.indentWidth,
+      maxLineLength: resolvedOptions.maxLineLength,
+      source,
+    })
 
     if (resolvedOptions.postRewriters.length > 0) {
       const context: RewriteContext = {

@@ -22,10 +22,10 @@ import dedent from "dedent"
 //                        output and keeps CI green until it is fixed. When the
 //                        bug is fixed the `.fails` starts failing; drop it then.
 //
-// NOTE: labels were verified against a local `vitest run`. The two remaining
-// `test.fails` cases (the inline-`if`-in-text case of #1729 and the inline
-// `tag.span do` block of #609) are deferred behind architectural changes
-// documented in DEV-JOURNAL.md at the repo root.
+// NOTE: labels were verified against a local `vitest run`. The one remaining
+// `test.fails` case (the inline-`if`-in-text case of #1729) is fixed
+// rendering-wise by the Doc-IR printer; only its exact-match expectation
+// diverges (a legal reflow at exactly 80 columns) — see DOC-IR-DIVERGENCES.md.
 
 let formatter: Formatter
 let expectFormattedToMatch: ReturnType<typeof createExpectFormattedToMatch>
@@ -57,11 +57,12 @@ describe("@herb-tools/formatter - whitespace preservation", () => {
       `)
     })
 
-    // DEFERRED (see DEV-JOURNAL.md): an inline `<% if %>...<% end %>` embedded
-    // mid-text still gets pulled onto its own line, which reintroduces a
-    // rendered space in the falsy branch (`Hello!` -> `Hello !`). A correct fix
-    // needs the text-flow engine to render control-flow nodes as inline atomic
-    // units — a larger, separately-scoped change.
+    // The rendering bug is fixed: the inline `<% if %>` participates in text
+    // flow as an atomic unit, so `Hello` stays glued to it and the falsy
+    // branch no longer gains a rendered space. This exact-match expectation
+    // still fails only because the two text lines legally re-join at exactly
+    // 80 columns (rendering-equivalent reflow); kept as the target until the
+    // fixture is re-cut. See DOC-IR-DIVERGENCES.md.
     test.fails("keeps inline if content on one visual line", () => {
       expectFormattedToMatch(dedent`
         <p>
@@ -158,12 +159,11 @@ describe("@herb-tools/formatter - whitespace preservation", () => {
       `)
     })
 
-    // DEFERRED (see DEV-JOURNAL.md): the inline `do`/`end` block is expanded
-    // onto multiple lines. This is a documented, parser-blocked limitation
-    // (`tag.span do` must first be transformed into an HTMLElementNode); see the
-    // TODO in test/html/text-content.test.ts which asserts the current
-    // multiline output. A formatter-only fix would contradict that spec.
-    test.fails("does not expand an inline tag.span block", () => {
+    // Fixed by the Doc-IR printer: control flow and blocks authored on one
+    // source line stay inline when they fit (DOC-IR-DIVERGENCES.md §C). The
+    // old counter-spec in test/html/text-content.test.ts (which asserted the
+    // expanded output with a TODO) is superseded.
+    test("does not expand an inline tag.span block", () => {
       expectFormattedToMatch(dedent`
         <%= tag.span do %>This should stay on one line<% end %>
       `)

@@ -1,22 +1,23 @@
 /**
- * Doc-IR validation harness (DOC-IR-DESIGN.md §7.5).
+ * Doc-IR corpus quality gate (DOC-IR-DESIGN.md §7.5).
  *
- * Replays the captured corpus (see capture-setup.ts) through both the
- * current FormatPrinter and the Doc-IR spike, and reports:
- *   - exact-match rate and divergence categories
- *   - idempotency of the spike output
- *   - reparse-equality (structural) of spike output vs source
+ * Replays a captured corpus (see capture-setup.ts) through the Doc-IR
+ * printer and reports idempotency and reparse-equality for every input.
+ *
+ * The original version of this file also diffed the Doc-IR output against
+ * the previous string-emission FormatPrinter; that comparison produced
+ * DOC-IR-DIVERGENCES.md and was removed together with the old printer
+ * (see git history for the comparison harness).
  *
  * Run:
  *   CORPUS_FILE=... yarn vitest run --config vitest.corpus.config.ts   # capture
  *   RUN_DOC_IR_HARNESS=1 CORPUS_FILE=... REPORT_FILE=... yarn vitest run test/doc-ir/harness/replay-harness.test.ts
  */
 
-import { describe, test, beforeAll } from "vitest"
+import { describe, test, expect, beforeAll } from "vitest"
 import { readFileSync, writeFileSync } from "node:fs"
 import { Herb } from "@herb-tools/node-wasm"
 
-import { FormatPrinter } from "../../../src/format-printer.js"
 import { isScaffoldTemplate } from "../../../src/scaffold-template-detector.js"
 import { hasFormatterIgnoreDirective } from "../../../src/format-ignore.js"
 import { printWithDocIR } from "../../../src/doc-ir/lower.js"
@@ -32,12 +33,10 @@ interface CorpusEntry {
 
 interface Sample {
   source: string
-  current?: string
-  spike?: string
+  output?: string
+  second?: string
   error?: string
 }
-
-type Category = "exact" | "blank-only" | "layout-only" | "content-diff" | "spike-error"
 
 const HARNESS_ENABLED = !!process.env.RUN_DOC_IR_HARNESS
 
@@ -100,20 +99,12 @@ function signatureString(source: string): string | null {
   return JSON.stringify(signature(parsed.value))
 }
 
-function stripBlankLines(text: string): string {
-  return text.split("\n").filter(line => line.trim() !== "").join("\n")
-}
-
-function collapseAllWhitespace(text: string): string {
-  return text.replace(/[ \t\n\r]+/g, " ").trim()
-}
-
-describe.skipIf(!HARNESS_ENABLED)("doc-ir replay harness", () => {
+describe.skipIf(!HARNESS_ENABLED)("doc-ir corpus quality gate", () => {
   beforeAll(async () => {
     await Herb.load()
   })
 
-  test("replay corpus and write divergence report", { timeout: 600_000 }, () => {
+  test("idempotency and reparse-equality over the corpus", { timeout: 600_000 }, () => {
     const corpusFile = process.env.CORPUS_FILE
     const reportFile = process.env.REPORT_FILE ?? "/tmp/doc-ir-report.json"
 
@@ -130,27 +121,16 @@ describe.skipIf(!HARNESS_ENABLED)("doc-ir replay harness", () => {
       entries.push(JSON.parse(line))
     }
 
-    const counts: Record<Category, number> = {
-      "exact": 0, "blank-only": 0, "layout-only": 0, "content-diff": 0, "spike-error": 0,
-    }
-    const samples: Record<Category, Sample[]> = {
-      "exact": [], "blank-only": [], "layout-only": [], "content-diff": [], "spike-error": [],
-    }
-
     let skipped = 0
+    let errors = 0
     let idempotent = 0
     let notIdempotent = 0
-    const idempotencySamples: Sample[] = []
-
     let reparseEqual = 0
     let reparseDiff = 0
+
+    const errorSamples: Sample[] = []
+    const idempotencySamples: Sample[] = []
     const reparseSamples: Sample[] = []
-
-    let currentReparseDiff = 0
-    let spikeOnlyReparseDiff = 0
-
-    let currentTotalMs = 0
-    let spikeTotalMs = 0
 
     const SAMPLE_CAP = 60
 
@@ -158,8 +138,6 @@ describe.skipIf(!HARNESS_ENABLED)("doc-ir replay harness", () => {
       const options = {
         indentWidth: entry.indentWidth,
         maxLineLength: entry.maxLineLength,
-        preRewriters: [],
-        postRewriters: [],
       }
 
       const probe = Herb.parse(entry.source)
@@ -169,129 +147,74 @@ describe.skipIf(!HARNESS_ENABLED)("doc-ir replay harness", () => {
         continue
       }
 
-      // Fresh parse per printer: FormatPrinter's herb:disable collector
-      // mutates the AST it prints.
-      let current: string
-      let start = performance.now()
+      let output: string
 
       try {
-        current = new FormatPrinter(entry.source, options).print(Herb.parse(entry.source).value)
+        output = printWithDocIR(Herb.parse(entry.source).value, { ...options, source: entry.source })
       } catch (error) {
-        skipped++
-        continue
-      }
+        errors++
 
-      currentTotalMs += performance.now() - start
-
-      let spike: string
-
-      start = performance.now()
-
-      try {
-        spike = printWithDocIR(Herb.parse(entry.source).value, { ...options, source: entry.source })
-      } catch (error) {
-        counts["spike-error"]++
-
-        if (samples["spike-error"].length < SAMPLE_CAP) {
-          samples["spike-error"].push({ source: entry.source, error: String(error) })
+        if (errorSamples.length < SAMPLE_CAP) {
+          errorSamples.push({ source: entry.source, error: String(error) })
         }
 
         continue
       }
 
-      spikeTotalMs += performance.now() - start
-
-      let category: Category
-
-      if (spike === current) {
-        category = "exact"
-      } else if (stripBlankLines(spike) === stripBlankLines(current)) {
-        category = "blank-only"
-      } else if (collapseAllWhitespace(spike) === collapseAllWhitespace(current)) {
-        category = "layout-only"
-      } else {
-        category = "content-diff"
-      }
-
-      counts[category]++
-
-      if (category !== "exact" && samples[category].length < SAMPLE_CAP) {
-        samples[category].push({ source: entry.source, current, spike })
-      }
-
-      // Idempotency: formatting the spike output again must be a fixpoint.
       try {
-        const second = printWithDocIR(Herb.parse(spike).value, { ...options, source: spike })
+        const second = printWithDocIR(Herb.parse(output).value, { ...options, source: output })
 
-        if (second === spike) {
+        if (second === output) {
           idempotent++
         } else {
           notIdempotent++
 
           if (idempotencySamples.length < SAMPLE_CAP) {
-            idempotencySamples.push({ source: entry.source, current: spike, spike: second })
+            idempotencySamples.push({ source: entry.source, output, second })
           }
         }
       } catch (error) {
         notIdempotent++
 
         if (idempotencySamples.length < SAMPLE_CAP) {
-          idempotencySamples.push({ source: entry.source, current: spike, error: String(error) })
+          idempotencySamples.push({ source: entry.source, output, error: String(error) })
         }
       }
 
-      // Reparse equality: spike output parses to the same structure as source.
       const sourceSig = signatureString(entry.source)
-      const spikeSig = signatureString(spike)
-      const currentSig = signatureString(current)
-      const spikeEqual = sourceSig !== null && sourceSig === spikeSig
-      const currentEqual = sourceSig !== null && sourceSig === currentSig
+      const outputSig = signatureString(output)
 
-      if (spikeEqual) reparseEqual++
-      else reparseDiff++
-
-      if (!currentEqual) currentReparseDiff++
-
-      // Spike-only reparse differences are the true regression candidates:
-      // structural changes the current formatter does not make.
-      if (!spikeEqual && currentEqual) {
-        spikeOnlyReparseDiff++
+      if (sourceSig !== null && sourceSig === outputSig) {
+        reparseEqual++
+      } else {
+        reparseDiff++
 
         if (reparseSamples.length < SAMPLE_CAP) {
-          reparseSamples.push({ source: entry.source, current, spike })
+          reparseSamples.push({ source: entry.source, output })
         }
       }
     }
 
-    const compared = counts["exact"] + counts["blank-only"] + counts["layout-only"] + counts["content-diff"]
-
     const report = {
       corpus: entries.length,
       skipped,
-      compared,
-      counts,
-      exactRate: compared > 0 ? counts["exact"] / compared : 0,
-      exactOrBlankRate: compared > 0 ? (counts["exact"] + counts["blank-only"]) / compared : 0,
+      errors,
       idempotent,
       notIdempotent,
       reparseEqual,
       reparseDiff,
-      currentReparseDiff,
-      spikeOnlyReparseDiff,
-      currentTotalMs: Math.round(currentTotalMs),
-      spikeTotalMs: Math.round(spikeTotalMs),
-      samples,
+      errorSamples,
       idempotencySamples,
       reparseSamples,
     }
 
     writeFileSync(reportFile, JSON.stringify(report, null, 2))
 
-    console.log(`corpus=${entries.length} skipped=${skipped} compared=${compared}`)
-    console.log(`exact=${counts["exact"]} (${(report.exactRate * 100).toFixed(1)}%)  +blank-only=${counts["blank-only"]} (${(report.exactOrBlankRate * 100).toFixed(1)}%)`)
-    console.log(`layout-only=${counts["layout-only"]} content-diff=${counts["content-diff"]} spike-error=${counts["spike-error"]}`)
-    console.log(`idempotent=${idempotent}/${idempotent + notIdempotent} reparse-equal=${reparseEqual}/${reparseEqual + reparseDiff} (current formatter reparse-diff baseline: ${currentReparseDiff})`)
-    console.log(`time: current=${report.currentTotalMs}ms spike=${report.spikeTotalMs}ms`)
+    console.log(`corpus=${entries.length} skipped=${skipped} errors=${errors}`)
+    console.log(`idempotent=${idempotent}/${idempotent + notIdempotent} reparse-equal=${reparseEqual}/${reparseEqual + reparseDiff}`)
     console.log(`report: ${reportFile}`)
+
+    expect(errors).toBe(0)
+    expect(notIdempotent).toBe(0)
   })
 })

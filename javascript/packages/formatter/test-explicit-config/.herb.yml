@@ -1,0 +1,7 @@
+files:
+  include:
+    - "**/*.html.erb"
+
+formatter:
+  enabled: true
+  indentWidth: 8
