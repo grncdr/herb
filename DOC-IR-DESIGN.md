@@ -306,6 +306,13 @@ maintainer review.
    rewriters, where an attribute-order rewriter could be added later without
    printer changes — noting that ERB control flow interleaved with attributes
    constrains safe reordering.
-4. ~~Rollout~~ — **resolved**: replace the printer outright under the
-   existing "Experimental Preview" label; no compatibility flag, no dual
-   implementation. The old printer's behavior survives only as fixtures.
+4. ~~Rollout~~ — **revised (2026-07-14)**: originally "replace outright, no
+   compatibility flag". Superseded by an opt-in knob:
+   `formatter.printer: classic | doc-ir` in `.herb.yml` (default `classic`),
+   `--printer doc-ir` on the CLI, and `--compare` (formats with both
+   printers and prints a unified diff, writes nothing). This decouples
+   merging from the fixture arbitration in §9.1: the branch merges green
+   with `classic` as default, users opt in, and the arbitration happens
+   when the default flips — at which point the classic printer and the
+   knob are deleted (the big-bang endgame is preserved on
+   `feature/formatter-doc-ir-big-bang`).

@@ -14,6 +14,9 @@ import { Config } from "@herb-tools/config"
 
 import { Formatter } from "./formatter.js"
 import { SummaryReporter } from "./cli/summary-reporter.js"
+import { unifiedDiff } from "./line-diff.js"
+
+import type { PrinterChoice } from "./options.js"
 import { ASTRewriter, StringRewriter, CustomRewriterLoader, builtinRewriters, isASTRewriterClass, isStringRewriterClass } from "@herb-tools/rewriter/loader"
 
 import type { SkippedFile } from "./cli/summary-reporter.js"
@@ -60,6 +63,10 @@ export class CLI {
       --force                         force formatting even if disabled in .herb.yml
       --indent-width <number>         number of spaces per indentation level (default: 2)
       --max-line-length <number>      maximum line length before wrapping (default: 80)
+      --printer <classic|doc-ir>      printing engine: 'classic' (default) or the experimental
+                                      Doc-IR printer (can also be set via formatter.printer in .herb.yml)
+      --compare                       don't write anything; show a diff of classic vs doc-ir output
+                                      for each file (or stdin)
 
     Examples:
       herb-format                                 # Format all configured files in current directory
@@ -77,6 +84,10 @@ export class CLI {
       herb-format --indent-width 4                # Format with 4-space indentation
       herb-format --max-line-length 100           # Format with 100-character line limit
       cat template.html.erb | herb-format         # Format from stdin to stdout
+
+      herb-format --printer doc-ir                # Format using the experimental Doc-IR printer
+      herb-format --compare templates/            # Preview how the two printers differ (writes nothing)
+      cat template.html.erb | herb-format --compare  # Diff both printers' output for stdin
   `
 
   private parseArguments() {
@@ -90,7 +101,9 @@ export class CLI {
         init: { type: "boolean" },
         "config-file": { type: "string" },
         "indent-width": { type: "string" },
-        "max-line-length": { type: "string" }
+        "max-line-length": { type: "string" },
+        "printer": { type: "string" },
+        "compare": { type: "boolean" }
       },
       allowPositionals: true
     })
@@ -126,20 +139,37 @@ export class CLI {
       maxLineLength = parsed
     }
 
+    let printer: PrinterChoice | undefined
+
+    if (values.printer) {
+      if (values.printer !== "classic" && values.printer !== "doc-ir") {
+        console.error(`Invalid printer: ${values.printer}. Must be 'classic' or 'doc-ir'.`)
+        process.exit(1)
+      }
+      printer = values.printer
+    }
+
     return {
       positionals,
       isCheckMode: values.check,
       isVersionMode: values.version,
       isForceMode: values.force,
       isInitMode: values.init,
+      isCompareMode: values.compare,
       configFile: values["config-file"],
       indentWidth,
-      maxLineLength
+      maxLineLength,
+      printer
     }
   }
 
   async run() {
-    const { positionals, isCheckMode, isVersionMode, isForceMode, isInitMode, configFile, indentWidth, maxLineLength } = this.parseArguments()
+    const { positionals, isCheckMode, isVersionMode, isForceMode, isInitMode, isCompareMode, configFile, indentWidth, maxLineLength, printer } = this.parseArguments()
+
+    if (isCompareMode && isCheckMode) {
+      console.error("Error: --compare and --check cannot be combined")
+      process.exit(1)
+    }
 
     const startTime = Date.now()
     const startDate = new Date()
@@ -231,6 +261,15 @@ export class CLI {
 
       if (maxLineLength !== undefined) {
         formatterConfig.maxLineLength = maxLineLength
+      }
+
+      if (printer !== undefined) {
+        formatterConfig.printer = printer
+      }
+
+      if (formatterConfig.printer === "doc-ir") {
+        console.error("⚠️  Using the experimental Doc-IR printer (--printer doc-ir / formatter.printer)")
+        console.error()
       }
 
       const preRewriters: ASTRewriter[] = []
@@ -368,6 +407,11 @@ export class CLI {
 
       const formatter = Formatter.from(Herb, config, { preRewriters, postRewriters })
 
+      if (isCompareMode) {
+        await this.runCompare(formatter, positionals, config, isForceMode, isUsingStdin)
+        return
+      }
+
       if (isUsingStdin) {
         if (isCheckMode) {
           console.error("Error: --check mode is not supported with stdin")
@@ -497,6 +541,61 @@ export class CLI {
     reporter.displaySummary(data)
 
     process.exit(isCheckMode && changedFiles.length > 0 ? 1 : 0)
+  }
+
+  /**
+   * `--compare`: format every target with both printers and print a unified
+   * diff of the outputs. Writes nothing.
+   */
+  private async runCompare(formatter: Formatter, positionals: string[], config: Config, isForceMode: boolean | undefined, isUsingStdin: boolean): Promise<void> {
+    const targets: { label: string, source: string }[] = []
+
+    if (isUsingStdin) {
+      targets.push({ label: "stdin", source: await this.readStdin() })
+    } else if (positionals.length > 0) {
+      const allFiles: string[] = []
+
+      for (const pattern of positionals) {
+        allFiles.push(...await this.resolvePatternToFiles(pattern, config, isForceMode))
+      }
+
+      for (const filePath of [...new Set(allFiles)]) {
+        targets.push({ label: relative(process.cwd(), filePath), source: readFileSync(filePath, "utf-8") })
+      }
+    } else {
+      const files = await config.findFilesForTool('formatter', process.cwd())
+
+      for (const filePath of files) {
+        targets.push({ label: relative(process.cwd(), filePath), source: readFileSync(filePath, "utf-8") })
+      }
+    }
+
+    if (targets.length === 0) {
+      console.log("No files found to compare")
+      process.exit(0)
+    }
+
+    let differing = 0
+
+    for (const { label, source } of targets) {
+      try {
+        const classic = formatter.format(source, { printer: "classic" })
+        const docIR = formatter.format(source, { printer: "doc-ir" })
+        const diff = unifiedDiff(classic, docIR, `${label} (classic)`, `${label} (doc-ir)`)
+
+        if (diff) {
+          differing++
+          console.log(diff)
+          console.log()
+        }
+      } catch (error) {
+        console.error(`Error comparing ${label}:`, error)
+      }
+    }
+
+    console.log(`Compared ${targets.length} ${pluralize(targets.length, 'file')}: ${differing} ${pluralize(differing, 'file')} would change with the doc-ir printer`)
+
+    process.exit(0)
   }
 
   private async readStdin(): Promise<string> {

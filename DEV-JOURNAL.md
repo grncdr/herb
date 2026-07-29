@@ -192,6 +192,32 @@ positive expectations in `test/doc-ir/lower.test.ts`. Full formatter suite
 the spike lives entirely under `src/doc-ir/` behind its own entry point
 (`printWithDocIR`).
 
+## Printer knob + --compare (2026-07-14)
+
+Design §9.4 revised from "replace outright" to an opt-in knob, so the merge
+no longer waits on fixture arbitration:
+
+- `FormatOptions.printer: "classic" | "doc-ir"` (default `classic`);
+  `Formatter.format` dispatches at the old one-line seam (formatter.ts).
+- `.herb.yml`: `formatter.printer` added to `FormatterConfigSchema`
+  (`@herb-tools/config` — schema is `.strict()`, so the field had to be
+  declared; config dist rebuilt) and flows through `Formatter.from` and
+  hence the language server. Precedence: per-call option > constructor
+  option > config.
+- CLI: `--printer <classic|doc-ir>` (validated), stderr banner when doc-ir
+  is active, and `--compare` — formats every target (stdin, files, globs,
+  or configured files) with BOTH printers and prints a unified diff;
+  writes nothing; incompatible with `--check`. Safe because
+  `Formatter.format` re-parses per call (the classic printer's
+  herb:disable collector mutates the AST it prints).
+- `src/line-diff.ts`: dependency-free LCS unified diff (hunks, 3 context
+  lines). New tests: `test/printer-selection.test.ts` (told apart by the
+  4-attribute rule: classic breaks, doc-ir keeps inline — pick a source
+  UNDER 80 cols or doc-ir breaks the body by whole-line accounting) and
+  `test/line-diff.test.ts`.
+- Note: `tsc --noEmit` has one pre-existing TS7022 error in
+  format-printer.ts (`textFlowResult`) unrelated to this change.
+
 Things a future session should know:
 - Parser locations: lines 1-based, columns 0-based **UTF-8 bytes**.
 - Whitespace nodes inside open tags are dropped by the parser — sibling-walk

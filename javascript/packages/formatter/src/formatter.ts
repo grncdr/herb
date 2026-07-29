@@ -1,4 +1,5 @@
 import { FormatPrinter } from "./format-printer.js"
+import { printWithDocIR } from "./doc-ir/lower.js"
 
 import { isScaffoldTemplate } from "./scaffold-template-detector.js"
 import { resolveFormatOptions } from "./options.js"
@@ -44,6 +45,7 @@ export class Formatter {
     const mergedOptions: FormatOptions = {
       indentWidth: options.indentWidth ?? formatterConfig.indentWidth,
       maxLineLength: options.maxLineLength ?? formatterConfig.maxLineLength,
+      printer: options.printer ?? formatterConfig.printer,
       preRewriters: options.preRewriters,
       postRewriters: options.postRewriters,
     }
@@ -102,7 +104,13 @@ export class Formatter {
       }
     }
 
-    let formatted = new FormatPrinter(source, resolvedOptions, this.herb).print(node)
+    let formatted = resolvedOptions.printer === "doc-ir"
+      ? printWithDocIR(node, {
+          indentWidth: resolvedOptions.indentWidth,
+          maxLineLength: resolvedOptions.maxLineLength,
+          source,
+        })
+      : new FormatPrinter(source, resolvedOptions, this.herb).print(node)
 
     if (resolvedOptions.postRewriters.length > 0) {
       const context: RewriteContext = {

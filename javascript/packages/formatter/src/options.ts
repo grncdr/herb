@@ -1,10 +1,19 @@
 import type { ASTRewriter, StringRewriter } from "@herb-tools/rewriter"
 
 /**
+ * The printing engine used to render the formatted output.
+ *
+ * - `"classic"`: the current string-emission printer (default).
+ * - `"doc-ir"`: the experimental Doc-IR pipeline (see DOC-IR-DESIGN.md).
+ */
+export type PrinterChoice = "classic" | "doc-ir"
+
+/**
  * Formatting options for the Herb formatter.
  *
  * indentWidth: number of spaces per indentation level.
  * maxLineLength: maximum line length before wrapping text or attributes.
+ * printer: printing engine ("classic" or "doc-ir").
  * preRewriters: AST rewriters to run before formatting.
  * postRewriters: String rewriters to run after formatting.
  */
@@ -13,6 +22,8 @@ export interface FormatOptions {
   indentWidth?: number
   /** maximum line length before wrapping; defaults to 80 */
   maxLineLength?: number
+  /** printing engine; defaults to "classic" */
+  printer?: PrinterChoice
   /** Pre-format rewriters (transform AST before formatting); defaults to [] */
   preRewriters?: ASTRewriter[]
   /** Post-format rewriters (transform string after formatting); defaults to [] */
@@ -25,6 +36,7 @@ export interface FormatOptions {
 export const defaultFormatOptions: Required<FormatOptions> = {
   indentWidth: 2,
   maxLineLength: 80,
+  printer: "classic",
   preRewriters: [],
   postRewriters: [],
 }
@@ -40,6 +52,7 @@ export function resolveFormatOptions(
   return {
     indentWidth: options.indentWidth ?? defaultFormatOptions.indentWidth,
     maxLineLength: options.maxLineLength ?? defaultFormatOptions.maxLineLength,
+    printer: options.printer ?? defaultFormatOptions.printer,
     preRewriters: options.preRewriters ?? defaultFormatOptions.preRewriters,
     postRewriters: options.postRewriters ?? defaultFormatOptions.postRewriters,
   }
