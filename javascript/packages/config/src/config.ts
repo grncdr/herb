@@ -65,6 +65,7 @@ export type FormatterConfig = {
   exclude?: string[]
   indentWidth?: number
   maxLineLength?: number
+  printer?: "classic" | "doc-ir"
   rewriter?: {
     pre?: string[]
     post?: string[]

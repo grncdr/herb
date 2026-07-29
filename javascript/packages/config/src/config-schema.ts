@@ -41,6 +41,7 @@ export const FormatterConfigSchema = z.object({
   exclude: z.array(z.string()).optional().describe("Glob patterns to exclude from formatting"),
   indentWidth: z.number().int().positive().optional().describe("Number of spaces per indentation level"),
   maxLineLength: z.number().int().positive().optional().describe("Maximum line length before wrapping"),
+  printer: z.enum(["classic", "doc-ir"]).optional().describe("Printing engine: 'classic' (default) or the experimental Doc-IR printer"),
   rewriter: RewriterConfigSchema.describe("Rewriter configuration for pre and post-format transformations"),
 }).strict().optional()
 
