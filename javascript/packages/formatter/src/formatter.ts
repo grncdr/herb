@@ -1,6 +1,7 @@
 import { FormatPrinter } from "./format-printer.js"
 import { convertIndentation } from "@herb-tools/printer"
 import { BYTE_ORDER_MARK } from "@herb-tools/core"
+import { printWithDocIR } from "./doc-ir/lower.js"
 
 import { isScaffoldTemplate } from "./scaffold-template-detector.js"
 import { resolveFormatOptions } from "./options.js"
@@ -47,6 +48,7 @@ export class Formatter {
       indentWidth: options.indentWidth ?? formatterConfig.indentWidth,
       indentStyle: options.indentStyle ?? formatterConfig.indentStyle,
       maxLineLength: options.maxLineLength ?? formatterConfig.maxLineLength,
+      printer: options.printer ?? formatterConfig.printer,
       preRewriters: options.preRewriters,
       postRewriters: options.postRewriters,
     }
@@ -140,7 +142,13 @@ export class Formatter {
       }
     }
 
-    let formatted = new FormatPrinter(input, resolvedOptions, this.herb).print(node)
+    let formatted = resolvedOptions.printer === "doc-ir"
+      ? printWithDocIR(node, {
+          indentWidth: resolvedOptions.indentWidth,
+          maxLineLength: resolvedOptions.maxLineLength,
+          source: input,
+        })
+      : new FormatPrinter(input, resolvedOptions, this.herb).print(node)
 
     if (resolvedOptions.postRewriters.length > 0) {
       const context: RewriteContext = {

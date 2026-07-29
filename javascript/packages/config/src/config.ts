@@ -131,6 +131,7 @@ export type FormatterConfig = {
   indentWidth?: number
   indentStyle?: "space" | "tab"
   maxLineLength?: number
+  printer?: "classic" | "doc-ir"
   rewriter?: {
     pre?: string[]
     post?: string[]
