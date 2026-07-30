@@ -241,20 +241,55 @@ export class Lowerer {
     return false
   }
 
+  private isControlFlowItem(node: Node): boolean {
+    return isNode(node, ERBIfNode)
+      || isNode(node, ERBUnlessNode)
+      || isNode(node, ERBBlockNode)
+      || isNode(node, ERBCaseNode)
+      || isNode(node, ERBCaseMatchNode)
+      || isNode(node, ERBWhileNode)
+      || isNode(node, ERBUntilNode)
+      || isNode(node, ERBForNode)
+      || isNode(node, ERBBeginNode)
+  }
+
   private isFlowItem(node: Node): boolean {
     if (this.isERBLeaf(node)) return true
     if (isNode(node, HTMLTextNode)) return true
     if (isNode(node, HTMLElementNode) && isInlineElement(getTagName(node))) return true
 
-    if (this.isSingleSourceLine(node) && (isNode(node, ERBIfNode) || isNode(node, ERBUnlessNode) || isNode(node, ERBBlockNode))) {
+    if (this.isSingleSourceLine(node) && this.isControlFlowItem(node)) {
       return true
     }
 
     return false
   }
 
-  private isAtomicFlowItem(node: Node): boolean {
-    return this.isFlowItem(node) && !isNode(node, HTMLTextNode)
+  /**
+   * Whether `items[index]` takes part in a text-flow run.
+   *
+   * Beyond `isFlowItem`, control flow that is *glued* to a neighbour always
+   * participates, however many lines it spans. Authored line count is not
+   * invariant under formatting — a glued one-liner too long to fit breaks
+   * internally and comes back multiline on the next pass — so deciding by
+   * line count alone puts a newline at a glued boundary on the second pass,
+   * which both changes rendering and breaks idempotency. Gluedness is
+   * invariant, so it is what the decision hangs on.
+   */
+  private isFlowItemAt(items: Node[], gaps: GapKind[], trailing: GapKind, index: number): boolean {
+    const node = items[index]
+
+    if (this.isFlowItem(node)) return true
+    if (!this.isControlFlowItem(node)) return false
+
+    const before = gaps[index]
+    const after = index + 1 < gaps.length ? gaps[index + 1] : trailing
+
+    return before === "glued" || after === "glued"
+  }
+
+  private isAtomicFlowItemAt(items: Node[], gaps: GapKind[], trailing: GapKind, index: number): boolean {
+    return this.isFlowItemAt(items, gaps, trailing, index) && !isNode(items[index], HTMLTextNode)
   }
 
   private isSingleSourceLine(node: Node): boolean {
@@ -393,16 +428,16 @@ export class Lowerer {
 
       // Text-flow runs (element mode): consecutive flow items connected by
       // non-blank gaps, containing both text and something atomic.
-      if (mode === "element" && this.isFlowItem(item)) {
+      if (mode === "element" && this.isFlowItemAt(items, gaps, trailing, index)) {
         let end = index + 1
 
-        while (end < items.length && this.isFlowItem(items[end]) && gaps[end] !== "blank" && !isHerbDisableComment(items[end])) {
+        while (end < items.length && this.isFlowItemAt(items, gaps, trailing, end) && gaps[end] !== "blank" && !isHerbDisableComment(items[end])) {
           end++
         }
 
         const run = items.slice(index, end)
         const hasText = run.some(node => isNode(node, HTMLTextNode) && this.textWords(node).length > 0)
-        const hasAtomic = run.some(node => this.isAtomicFlowItem(node))
+        const hasAtomic = run.some((_, offset) => this.isAtomicFlowItemAt(items, gaps, trailing, index + offset))
 
         if (run.length >= 2 && hasText && hasAtomic) {
           startPart(blockSeparator(gap))
@@ -583,9 +618,19 @@ export class Lowerer {
 
   // --- Control flow ---
 
+  /**
+   * Map a boundary gap of an ERB body to a separator.
+   *
+   * A glued boundary lowers to plain concatenation, never `softline`: the
+   * body's content is inline in the surrounding flow, so a newline there
+   * would render as whitespace the source did not have (`…overflows<% end
+   * %>!` must not become `…overflows\n<% end %>!`). In attribute position a
+   * glued boundary instead needs a space, since the alternative is invalid
+   * HTML.
+   */
   private mapBoundaryGap(gap: GapKind, attributes = false): Doc {
     switch (gap) {
-      case "glued": return attributes ? line : softline
+      case "glued": return attributes ? line : ""
       case "space": return line
       default: return hardline
     }
@@ -671,9 +716,14 @@ export class Lowerer {
 
     parts.push(this.mapBoundaryGap(body.trailingGap))
 
-    for (const clause of [node.rescue_clause, node.else_clause, node.ensure_clause]) {
-      if (clause) parts.push(this.lowerClauseChain(clause), hardline)
-    }
+    const clauses = [node.rescue_clause, node.else_clause, node.ensure_clause].filter(Boolean) as (ERBRescueNode | ERBElseNode | ERBEnsureNode)[]
+
+    clauses.forEach((clause, index) => {
+      const nextTag = (clauses[index + 1] ?? node.end_node) as ERBTagLike | null
+      const chain = this.lowerClauseChain(clause, nextTag)
+
+      parts.push(chain.parts, chain.trailingSeparator)
+    })
 
     if (node.end_node) parts.push(this.erbTagDoc(node.end_node))
 
@@ -687,27 +737,34 @@ export class Lowerer {
   }
 
   /** rescue chains: each clause tag at parent level with indented statements. */
-  private lowerClauseChain(clause: ERBRescueNode | ERBElseNode | ERBEnsureNode): Doc {
+  /**
+   * Lower a rescue/else/ensure chain. `nextTag` is whatever follows the chain
+   * (the next clause or `<% end %>`), so the separator before it comes from
+   * the source gap rather than being forced to a newline.
+   */
+  private lowerClauseChain(clause: ERBRescueNode | ERBElseNode | ERBEnsureNode, nextTag: ERBTagLike | null): { parts: Doc[], trailingSeparator: Doc } {
     const parts: Doc[] = []
 
     let current: Node | null = clause
+    let trailingSeparator: Doc = hardline
 
     while (current) {
       const statements: Node[] = (current as ERBRescueNode).statements ?? []
+      const next: Node | null = isNode(current, ERBRescueNode) ? current.subsequent : null
       const segment = this.controlFlowSegment(this.erbTagDoc(current as unknown as ERBTagLike), statements, {
         openEnd: tagOpenEnd(current as unknown as ERBTagLike),
+        closeStart: tagCloseStart((next as unknown as ERBTagLike) ?? nextTag),
       })
 
       parts.push(...segment.parts)
-
-      const next: Node | null = isNode(current, ERBRescueNode) ? current.subsequent : null
+      trailingSeparator = segment.trailingSeparator
 
       if (next) parts.push(segment.trailingSeparator)
 
       current = next
     }
 
-    return parts
+    return { parts, trailingSeparator }
   }
 
   private lowerClause(node: ERBWhenNode | ERBInNode, statements: Node[]): Doc {
@@ -781,9 +838,14 @@ export class Lowerer {
 
     parts.push(...segment.parts, segment.trailingSeparator)
 
-    for (const clause of [node.rescue_clause, node.else_clause, node.ensure_clause]) {
-      if (clause) parts.push(this.lowerClauseChain(clause), hardline)
-    }
+    const clauses = [node.rescue_clause, node.else_clause, node.ensure_clause].filter(Boolean) as (ERBRescueNode | ERBElseNode | ERBEnsureNode)[]
+
+    clauses.forEach((clause, index) => {
+      const nextTag = (clauses[index + 1] ?? node.end_node) as ERBTagLike | null
+      const chain = this.lowerClauseChain(clause, nextTag)
+
+      parts.push(chain.parts, chain.trailingSeparator)
+    })
 
     if (node.end_node) parts.push(this.erbTagDoc(node.end_node))
 
