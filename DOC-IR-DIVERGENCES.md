@@ -4,7 +4,27 @@ Companion to DOC-IR-DESIGN.md. Produced by the validation harness
 (`test/doc-ir/harness/`) comparing the Doc-IR spike against the current
 `FormatPrinter` on every input captured from a full formatter test-suite run.
 
-Date: 2026-07-13. Spike code: `javascript/packages/formatter/src/doc-ir/`.
+Spike code: `javascript/packages/formatter/src/doc-ir/`. First measured
+2026-07-13, re-measured 2026-07-30 after rebasing onto upstream `main`.
+
+**Status:** both printers ship side by side behind `formatter.printer` /
+`--printer doc-ir`, default `classic`, so nothing below changes anyone's
+output until the default flips (design §9.4). `--compare` prints these
+divergences for a real project.
+
+Two bugs the re-measurement caught, both now fixed on the branch:
+
+1. **Idempotency broke (2 inputs)** on glued control flow too long to fit:
+   the construct broke internally on pass 1, which made it *authored
+   multiline* on pass 2, flipping the inline-eligibility test that was keyed
+   on authored line count — so pass 2 put a newline at a glued boundary.
+   Line count is not invariant under formatting; gluedness is, so
+   eligibility now hangs on the boundary gaps instead.
+2. **A glued body boundary could still break** (`…overflows<% end %>!`
+   became `…overflows\n<% end %>!`, adding a rendered space before `!`).
+   Glued ERB body boundaries now lower to plain concatenation, matching the
+   rule already applied to inline elements. A hardcoded newline before
+   `<% end %>` in rescue/ensure chains, which this exposed, went with it.
 
 ## Reproduce
 
@@ -21,20 +41,37 @@ RUN_DOC_IR_HARNESS=1 CORPUS_FILE=/tmp/corpus.jsonl REPORT_FILE=/tmp/report.json 
 
 ## Headline numbers
 
-| Metric | Value |
-| --- | --- |
-| Corpus (unique inputs) | 971 |
-| Compared (parse ok, not scaffold/ignored) | 860 |
-| **Exact match with current formatter** | **724 (84.2%)** |
-| Exact + blank-line-policy-only diffs | 792 (92.1%) |
-| Layout-only diffs (same content, different break points) | 15 |
-| Content diffs (all in categories below) | 53 |
-| Spike crashes | 0 |
-| **Idempotency failures** (format∘format ≠ format) | **0 / 860** |
-| Reparse-structure diffs — spike | 113 |
-| Reparse-structure diffs — current formatter (baseline) | 140 |
-| **Spike-only reparse diffs** | **1** (§E, deliberate) |
-| Corpus wall-time — current / spike | 461ms / 408ms |
+Re-measured 2026-07-30 after rebasing onto upstream `main`, which had landed
+three fixes in this exact area (#1863, #1884, #1895) and grown the corpus.
+The pre-rebase column is kept because the *composition* of the difference
+changed, not just the totals.
+
+| Metric | 2026-07-30 (vs improved printer) | 2026-07-13 |
+| --- | --- | --- |
+| Corpus (unique inputs) | 1081 | 971 |
+| Compared (parse ok, not scaffold/ignored) | 969 | 860 |
+| **Exact match with current formatter** | **797 (82.2%)** | 724 (84.2%) |
+| Exact + blank-line-policy-only diffs | 867 (89.5%) | 792 (92.1%) |
+| Layout-only diffs (same content, different break points) | 27 | 15 |
+| Content diffs (all in categories below) | 75 | 53 |
+| Spike crashes | 0 | 0 |
+| **Idempotency failures** (format∘format ≠ format) | **0 / 969** | 0 / 860 |
+| Reparse-structure diffs — spike | 117 | 113 |
+| Reparse-structure diffs — current formatter (baseline) | 151 | 140 |
+| **Spike-only reparse diffs** | **1** (§E, deliberate) | 1 |
+| Corpus wall-time — current / spike | 485ms / 418ms | 461ms / 408ms |
+
+The exact-match rate moved down ~2 points even though both printers got
+better, for a specific reason: upstream's #1863/#1884 fixed the *cheap* half
+of the glued-boundary problem (don't insert whitespace between glued
+siblings) while the spike also enforces the *expensive* half — a glued
+boundary may never break even when the line overflows or the construct spans
+several lines. Eight inputs that previously matched now diverge because the
+classic printer expands glued control flow (`<% 5.times do %>OK<% rescue
+%>ERR<% end %>` → five lines) and the spike preserves it. Those are
+rendering-preserving on the spike's side and rendering-changing on the
+classic side, so the direction of the divergence is the argument for it, not
+against it. Categories §C/§F below cover them.
 
 The four `test.fails` cases of the significant-whitespace family (#1729 A–D,
 including the two deferred ones) all produce their target output under the

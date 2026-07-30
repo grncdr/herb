@@ -28,12 +28,21 @@ answered by one of:
 
 "Is this node glued to its neighbor?" — the question underlying the
 significant-whitespace bug family (#1729, #469, #855, #931, #609, …) — is
-re-derived independently at four sites with four different answers
-(`shouldAppendToLastLine`, `isSourceAdjacentToPrevious`,
-`tryMergeAtomicAfterText`, `tryRenderChildrenInline`).
+re-derived independently at several sites with different answers
+(`shouldAppendToLastLine`, `tryMergeAtomicAfterText`,
+`tryRenderChildrenInline`).
 
 The bug tracker (26 open formatter issues) is dominated by consequences of
 this design, and fixes are whack-a-mole: each one adds another local heuristic.
+
+Evidence accumulated while this spike was in flight (2026-07-13 → 07-30):
+three upstream fixes in exactly this area — #1863 (glued content
+boundaries), #1884 (inline-element edge punctuation), #1895 (ERB in
+attribute position) — grew `formatter/src` by **+502 lines**, concentrated
+in the modules this design replaces (`format-printer.ts` +214,
+`text-flow-helpers.ts` +141, `text-flow-analyzer.ts` +97). Those fixes are
+real (they subsume an earlier local patch on this branch), but the growth
+curve is the argument: each correct fix makes the next one harder.
 
 ## 2. The Doc-IR in one paragraph
 

@@ -6,7 +6,7 @@ issues #1729, #469, #609, …). Four cases were still reproducing on `main` and
 tracked as `test.fails`. Goal: make them pass without regressing other
 formatter specs, with minimal changes.
 
-## Fixed (small, no regressions)
+## Fixed upstream (our patch was superseded — 2026-07-30)
 
 **Case A — #1729:** text directly following an ERB output inside an `if` block
 (`<%= user.name %>'s dog`) was split onto its own line.
@@ -17,25 +17,18 @@ ERB output inside an `if` block was pushed onto its own line.
 Root cause: `visitERBIfNode` / `visitERBElseNode` rendered statements with a
 bare `visitAll(node.statements)`, so every statement landed on its own line and
 any text/punctuation directly touching the preceding ERB was separated from it.
-(`visitERBBlockNode` / `visitERBRenderNode` already routed through richer
-dispatch.)
 
-Fix: render control-flow statements via `visitElementChildren` in a new
-"control-flow mode" (`elementBodyMode = false`) that:
-- keeps one statement per line (preserving the one-ERB-output-per-line behavior
-  from #1210 — HTML-style text-flow collapsing is *not* applied here), but
-- appends content that is *directly source-adjacent* (no whitespace between) to
-  the preceding node onto the same line, via a new, control-flow-only predicate
-  `isSourceAdjacentToPrevious` (stricter than `shouldAppendToLastLine`: a
-  preceding text node ending in whitespace, or an intervening whitespace-only
-  node, disqualifies — so newline-separated ERB outputs stay separate), and
-- skips the automatic blank-line-between-siblings insertion (which `visitAll`
-  never did, and which otherwise regressed a herb:disable spec).
-
-This is isolated to the control-flow path; HTML element bodies and `do`/`end`
-blocks are unchanged. Full non-CLI suite stays green (1163 passing, same as
-baseline; the pre-existing 74 CLI failures are environment-related and
-unrelated to formatter logic).
+We fixed this locally by rendering control-flow statements through
+`visitElementChildren` in a "control-flow mode" that appended
+source-adjacent content via a new `isSourceAdjacentToPrevious` predicate.
+**That commit was dropped when rebasing onto upstream**, because upstream
+fixed both cases independently in #1863 ("don't add or remove whitespace at
+glued content boundaries") and #1884 ("preserve whitespace for inline element
+edges punctuation"), and arrived at a cleaner factoring of the same idea:
+`visitStatements` + `visitElementChildren(body, parent, { allowBlankLines })`.
+Verified before dropping: with upstream's printer alone, both fixture cases
+pass. The fixtures remain as regression guards, now crediting the upstream
+issues.
 
 ## Deferred (need architectural changes — NOT attempted)
 
@@ -217,6 +210,39 @@ no longer waits on fixture arbitration:
   `test/line-diff.test.ts`.
 - Note: `tsc --noEmit` has one pre-existing TS7022 error in
   format-printer.ts (`textFlowResult`) unrelated to this change.
+
+## Rebased onto upstream main (2026-07-30)
+
+Branch `feature/formatter-doc-ir-rebased`, 9 commits (was 10). Upstream had
+moved 30 commits ahead. What the rebase taught us:
+
+- **Our classic-printer patch was superseded and dropped.** Upstream fixed
+  cases A and C in #1863/#1884 with a cleaner factoring (`visitStatements` +
+  `visitElementChildren(body, parent, { allowBlankLines })`). Verified before
+  dropping by running our fixtures against upstream's printer alone: both
+  pass. Dropping the commit also dropped its `test.fails` → `test` flips, so
+  those markers were re-flipped by hand and now credit the upstream issues.
+- One real conflict beyond that: upstream's `FormatPrinter` takes `this.herb`
+  as a third argument. Trivial merge with the printer-knob dispatch.
+- Rebuild after rebasing: `control_type.c` changed, so the wasm has to be
+  rebuilt, then core → node-wasm → config → printer → tailwind → rewriter.
+  Skipping this silently tests against a stale parser.
+- Upstream added `positionFromOffset(source, offset)` in `core/src/position.ts`
+  documenting columns as **UTF-16 character** columns, while `gaps.ts` is
+  built on the empirically verified fact that *parser* columns are **UTF-8
+  bytes**. Both can be true (different producers), but it is a trap: if the
+  parser ever switches to character columns, `SourceIndex.charColumn` becomes
+  a no-op that must be deleted, and the failure mode is silent (only
+  multibyte lines misformat). Worth raising upstream.
+- Re-measuring the corpus caught two genuine spike bugs (see
+  DOC-IR-DIVERGENCES.md status section): idempotency broke on glued control
+  flow that overflows, because inline-eligibility was keyed on authored line
+  count, which formatting itself changes — it now hangs on boundary
+  gluedness, which formatting preserves. And a glued body boundary could
+  still break, adding rendered whitespace; glued ERB boundaries now lower to
+  plain concatenation like inline elements already did. Cost: 8 exact matches
+  (the classic printer expands glued control flow, we preserve it), gain: 0
+  idempotency failures and 2 fewer rendering-changing divergences.
 
 Things a future session should know:
 - Parser locations: lines 1-based, columns 0-based **UTF-8 bytes**.
