@@ -5,7 +5,8 @@ Companion to DOC-IR-DESIGN.md. Produced by the validation harness
 `FormatPrinter` on every input captured from a full formatter test-suite run.
 
 Spike code: `javascript/packages/formatter/src/doc-ir/`. First measured
-2026-07-13, re-measured 2026-07-30 after rebasing onto upstream `main`.
+2026-07-13; re-measured on each rebase onto upstream `main` (latest:
+2026-08-01, base `44cd4f11`).
 
 **Status:** both printers ship side by side behind `formatter.printer` /
 `--printer doc-ir`, default `classic`, so nothing below changes anyone's
@@ -46,32 +47,53 @@ three fixes in this exact area (#1863, #1884, #1895) and grown the corpus.
 The pre-rebase column is kept because the *composition* of the difference
 changed, not just the totals.
 
-| Metric | 2026-07-30 (vs improved printer) | 2026-07-13 |
-| --- | --- | --- |
-| Corpus (unique inputs) | 1081 | 971 |
-| Compared (parse ok, not scaffold/ignored) | 969 | 860 |
-| **Exact match with current formatter** | **797 (82.2%)** | 724 (84.2%) |
-| Exact + blank-line-policy-only diffs | 867 (89.5%) | 792 (92.1%) |
-| Layout-only diffs (same content, different break points) | 27 | 15 |
-| Content diffs (all in categories below) | 75 | 53 |
-| Spike crashes | 0 | 0 |
-| **Idempotency failures** (format∘format ≠ format) | **0 / 969** | 0 / 860 |
-| Reparse-structure diffs — spike | 117 | 113 |
-| Reparse-structure diffs — current formatter (baseline) | 151 | 140 |
-| **Spike-only reparse diffs** | **1** (§E, deliberate) | 1 |
-| Corpus wall-time — current / spike | 485ms / 418ms | 461ms / 408ms |
+| Metric | 2026-08-01 | 2026-07-30 | 2026-07-13 |
+| --- | --- | --- | --- |
+| Corpus (unique inputs) | 1099 | 1081 | 971 |
+| Compared (parse ok, not scaffold/ignored) | 987 | 969 | 860 |
+| **Exact match with current formatter** | **815 (82.6%)** | 797 (82.2%) | 724 (84.2%) |
+| Exact + blank-line-policy-only diffs | 885 (89.7%) | 867 (89.5%) | 792 (92.1%) |
+| Layout-only diffs (same content, different break points) | 27 | 27 | 15 |
+| Content diffs (all in categories below) | 75 | 75 | 53 |
+| Spike crashes | 0 | 0 | 0 |
+| **Idempotency failures** (format∘format ≠ format) | **0 / 987** | 0 / 969 | 0 / 860 |
+| Reparse-structure diffs — spike | 106 | 117 | 113 |
+| Reparse-structure diffs — current formatter (baseline) | 152 | 151 | 140 |
+| **Spike-only reparse diffs** | **1** (§E, deliberate) | 1 | 1 |
+| Corpus wall-time — current / spike | 487ms / 425ms | 485ms / 418ms | 461ms / 408ms |
 
-The exact-match rate moved down ~2 points even though both printers got
-better, for a specific reason: upstream's #1863/#1884 fixed the *cheap* half
-of the glued-boundary problem (don't insert whitespace between glued
-siblings) while the spike also enforces the *expensive* half — a glued
-boundary may never break even when the line overflows or the construct spans
-several lines. Eight inputs that previously matched now diverge because the
-classic printer expands glued control flow (`<% 5.times do %>OK<% rescue
-%>ERR<% end %>` → five lines) and the spike preserves it. Those are
-rendering-preserving on the spike's side and rendering-changing on the
-classic side, so the direction of the divergence is the argument for it, not
-against it. Categories §C/§F below cover them.
+The exact-match rate moved down ~2 points between 07-13 and 07-30 even though
+both printers got better, for a specific reason: upstream's #1863/#1884 fixed
+the *cheap* half of the glued-boundary problem (don't insert whitespace
+between glued siblings) while the spike also enforces the *expensive* half —
+a glued boundary may never break even when the line overflows or the
+construct spans several lines. Eight inputs that previously matched now
+diverge because the classic printer expands glued control flow (`<% 5.times
+do %>OK<% rescue %>ERR<% end %>` → five lines) and the spike preserves it.
+Those are rendering-preserving on the spike's side and rendering-changing on
+the classic side, so the direction of the divergence is the argument for it,
+not against it. Categories §C/§F below cover them.
+
+**08-01 movement (upstream #1916, #1917, #1923, #1924).** Both printers
+converged slightly: exact match +18 inputs, and the spike's
+reparse-structure diffs fell 117 → 106 while the classic printer's held at
+~152. Two of those fixes are worth naming because of *where* they land:
+
+- **#1924 (`<br>` alternating between glued and split form) converged onto
+  the spike's behaviour.** `<p>One<br> Two<br> Three</p>` is now byte-identical
+  from both printers, where the classic one previously isolated each `<br>`
+  on its own line. Note what the bug was: output that alternated between two
+  forms across passes — a non-idempotency, the class of defect the Doc-IR
+  layout rules out structurally rather than per-shape.
+- **#1916 (`herb:disable` comment moving after tag) did not converge.** The
+  classic printer still relocates `<DIV> <%# herb:disable rule-one %>` to
+  `<DIV>Content.</DIV> <%# herb:disable rule-one %>`; §B still applies.
+
+Category composition is otherwise unchanged. Caveat for anyone re-running
+this: the report's `samples` arrays are capped (60 per category), so counting
+categories from the samples undercounts and drifts between runs — the
+category totals above come from the full `counts`, and per-category claims
+here were checked by formatting the specific inputs with both printers.
 
 The four `test.fails` cases of the significant-whitespace family (#1729 A–D,
 including the two deferred ones) all produce their target output under the

@@ -244,6 +244,34 @@ moved 30 commits ahead. What the rebase taught us:
   (the classic printer expands glued control flow, we preserve it), gain: 0
   idempotency failures and 2 fewer rendering-changing divergences.
 
+## Keeping the branch current (daily loop procedure)
+
+Run on each rebase onto `upstream/main`:
+
+1. `git fetch upstream origin`. If not behind and origin is in sync, stop —
+   don't create a backup branch for a no-op.
+2. Back up: `git branch backup/formatter-doc-ir-pre-rebase-<date>` at the old
+   tip (local only; these are rebase-equivalent snapshots, so they are not
+   pushed — only `d8e7d5ea`, the genuinely different pre-rebase history, is
+   on origin).
+3. `git rebase upstream/main`.
+4. **If any of `src/`, `include/`, `templates/`, `wasm/` changed**, rebuild
+   before testing: templates → wasm → core → node-wasm → config → printer →
+   tailwind-class-sorter → rewriter. Skipping this tests a stale parser.
+5. Full formatter suite (exclude `test/cli/**`, `test/cli.test.ts` — those
+   fail for environment reasons here).
+6. Re-measure the divergence report: capture a fresh corpus, replay, update
+   the table and the movement notes in DOC-IR-DIVERGENCES.md. Upstream is
+   actively fixing the same bug family, so the numbers go stale on almost
+   every rebase.
+7. `git push --force-with-lease origin feature/formatter-doc-ir`. If the
+   lease is refused, stop and report — do not resolve unattended.
+
+Harness caveat: `samples` arrays in the JSON report are capped at 60 per
+category, so counting categories from samples undercounts and drifts run to
+run. Use `counts` for totals and verify per-category claims by formatting the
+specific input with both printers (`--compare`, or `format(src, { printer })`).
+
 Things a future session should know:
 - Parser locations: lines 1-based, columns 0-based **UTF-8 bytes**.
 - Whitespace nodes inside open tags are dropped by the parser — sibling-walk
