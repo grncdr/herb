@@ -47,20 +47,20 @@ three fixes in this exact area (#1863, #1884, #1895) and grown the corpus.
 The pre-rebase column is kept because the *composition* of the difference
 changed, not just the totals.
 
-| Metric | 2026-08-01 | 2026-07-30 | 2026-07-13 |
-| --- | --- | --- | --- |
-| Corpus (unique inputs) | 1099 | 1081 | 971 |
-| Compared (parse ok, not scaffold/ignored) | 987 | 969 | 860 |
-| **Exact match with current formatter** | **815 (82.6%)** | 797 (82.2%) | 724 (84.2%) |
-| Exact + blank-line-policy-only diffs | 885 (89.7%) | 867 (89.5%) | 792 (92.1%) |
-| Layout-only diffs (same content, different break points) | 27 | 27 | 15 |
-| Content diffs (all in categories below) | 75 | 75 | 53 |
-| Spike crashes | 0 | 0 | 0 |
-| **Idempotency failures** (format∘format ≠ format) | **0 / 987** | 0 / 969 | 0 / 860 |
-| Reparse-structure diffs — spike | 106 | 117 | 113 |
-| Reparse-structure diffs — current formatter (baseline) | 152 | 151 | 140 |
-| **Spike-only reparse diffs** | **1** (§E, deliberate) | 1 | 1 |
-| Corpus wall-time — current / spike | 487ms / 425ms | 485ms / 418ms | 461ms / 408ms |
+| Metric | 2026-08-02 | 2026-08-01 | 2026-07-30 | 2026-07-13 |
+| --- | --- | --- | --- | --- |
+| Corpus (unique inputs) | 1163 | 1099 | 1081 | 971 |
+| Compared (parse ok, not scaffold/ignored) | 1051 | 987 | 969 | 860 |
+| **Exact match with current formatter** | **863 (82.1%)** | 815 (82.6%) | 797 (82.2%) | 724 (84.2%) |
+| Exact + blank-line-policy-only diffs | 930 (88.5%) | 885 (89.7%) | 867 (89.5%) | 792 (92.1%) |
+| Layout-only diffs (same content, different break points) | 37 | 27 | 27 | 15 |
+| Content diffs (all in categories below) | 84 | 75 | 75 | 53 |
+| Spike crashes | 0 | 0 | 0 | 0 |
+| **Idempotency failures** (format∘format ≠ format) | **0 / 1051** | 0 / 987 | 0 / 969 | 0 / 860 |
+| Reparse-structure diffs — spike | 108 | 106 | 117 | 113 |
+| Reparse-structure diffs — current formatter (baseline) | 152 | 152 | 151 | 140 |
+| **Spike-only reparse diffs** | **1** (§E, deliberate) | 1 | 1 | 1 |
+| Corpus wall-time — current / spike | 527ms / 447ms | 487ms / 425ms | 485ms / 418ms | 461ms / 408ms |
 
 The exact-match rate moved down ~2 points between 07-13 and 07-30 even though
 both printers got better, for a specific reason: upstream's #1863/#1884 fixed
@@ -94,6 +94,29 @@ this: the report's `samples` arrays are capped (60 per category), so counting
 categories from the samples undercounts and drifts between runs — the
 category totals above come from the full `counts`, and per-category claims
 here were checked by formatting the specific inputs with both printers.
+
+**08-02 movement (upstream #1834, #1926, #1949, #1950, and 41 other commits).**
+**Category §D is resolved: upstream adopted width-only attribute wrapping**
+(#1834 "Wrap attributes based on `maxLineLength` only"), which is the policy
+decided in design §9.3. `<div id="a" class="b" data-x="c" data-y="d">Content</div>`
+is now byte-identical from both printers; the attribute-count rule is gone
+from the classic printer too. That is the second design decision upstream has
+independently arrived at, after the `<br>` instability in #1924.
+
+Absolute exact matches rose 815 → 863 on a corpus that grew by 64 inputs, so
+the *rate* dipped slightly (82.6% → 82.1%) while the count improved.
+Layout-only diffs rose 27 → 37; the new ones are all one shape —
+ERB control flow in *attribute position*, where the classic printer expands
+the body across three lines and the spike keeps the authored single line:
+
+```erb
+<div <% if disabled? %> disabled <% end %> id="element" …>
+classic:  <% if disabled? %>\n    disabled\n  <% end %>
+spike:    <% if disabled? %> disabled <% end %>
+```
+
+Whitespace-collapsed these are equal, hence "layout-only"; it is category §C
+(authored-inline control flow is preserved) showing up inside open tags.
 
 The four `test.fails` cases of the significant-whitespace family (#1729 A–D,
 including the two deferred ones) all produce their target output under the
@@ -155,15 +178,21 @@ Conflicting specs needing arbitration (design §9.1):
 - `test/erb/erb.test.ts` inline `link_to`/`for`/`while` specs expect
   expansion; the spike preserves the authored one-liner.
 
-### D. Attribute-count rule dropped (~8 diffs)
+### D. Attribute-count rule dropped — ~~divergence~~ **RESOLVED upstream (2026-08-02)**
 
 Decided (design §9.3): wrapping is purely width-driven. `>3 attributes →
 always break` is gone.
 
 ```html
 <div id="element" class="bg-gray-300" another="attribute" final="one">Content</div>
-current: 9 lines (count rule)      spike: unchanged (71 cols)
+before: 9 lines (count rule)      spike: unchanged (71 cols)
 ```
+
+Upstream adopted this in #1834 ("Wrap attributes based on `maxLineLength`
+only"), so both printers now agree and this is no longer a divergence — no
+arbitration needed. What remains in the same area is only §C/§E: ERB control
+flow *in attribute position* still expands under the classic printer while
+the spike keeps the authored line (counted under layout-only diffs).
 
 ### E. Width accounting covers the whole output line (~6 diffs, incl. the 1 spike-only reparse diff)
 
