@@ -6,19 +6,42 @@ import { Formatter } from "../src"
 
 import type { Config } from "@herb-tools/config"
 
-// Four attributes on a line that fits in 80 columns: the classic printer
-// breaks them (attribute-count rule), the Doc-IR printer keeps everything
-// inline (width-driven wrapping) — a deterministic way to tell them apart.
-const source = `<div id="a" class="b" data-x="c" data-y="d">Content</div>`
+// These tests need one input the two printers demonstrably disagree on, to
+// prove the selection actually took effect. The blank-line policy is the
+// right choice: the classic printer inserts a blank line between siblings
+// when one of them is multiline, the Doc-IR printer only preserves authored
+// blank lines (DOC-IR-DIVERGENCES.md §A). That is a decided policy
+// difference awaiting arbitration, so it will not drift out from under this
+// test until the default flips.
+//
+// The previous discriminator here — four attributes on a line that fits,
+// which the classic printer used to break one-per-line — stopped working
+// when upstream #1834 adopted width-only attribute wrapping and the two
+// printers converged.
+const source = dedent`
+  <div>
+    <p>a
+    multi</p>
+    <p>b</p>
+  </div>
+`
 
 const classicOutput = dedent`
-  <div
-    id="a"
-    class="b"
-    data-x="c"
-    data-y="d"
-  >
-    Content
+  <div>
+    <p>
+      a multi
+    </p>
+
+    <p>b</p>
+  </div>
+`
+
+const docIROutput = dedent`
+  <div>
+    <p>
+      a multi
+    </p>
+    <p>b</p>
   </div>
 `
 
@@ -36,21 +59,21 @@ describe("printer selection", () => {
   test("printer: 'doc-ir' constructor option selects the Doc-IR printer", () => {
     const formatter = new Formatter(Herb, { printer: "doc-ir" })
 
-    expect(formatter.format(source)).toEqual(source)
+    expect(formatter.format(source)).toEqual(docIROutput)
   })
 
   test("per-call option overrides the constructor option", () => {
     const formatter = new Formatter(Herb, { printer: "doc-ir" })
 
     expect(formatter.format(source, { printer: "classic" })).toEqual(classicOutput)
-    expect(formatter.format(source, { printer: "doc-ir" })).toEqual(source)
+    expect(formatter.format(source, { printer: "doc-ir" })).toEqual(docIROutput)
   })
 
   test("formatter.printer from config flows through Formatter.from", () => {
     const config = { formatter: { printer: "doc-ir" } } as unknown as Config
     const formatter = Formatter.from(Herb, config)
 
-    expect(formatter.format(source)).toEqual(source)
+    expect(formatter.format(source)).toEqual(docIROutput)
   })
 
   test("explicit option wins over config", () => {

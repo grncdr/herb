@@ -258,6 +258,16 @@ Run on each rebase onto `upstream/main`:
 4. **If any of `src/`, `include/`, `templates/`, `wasm/` changed**, rebuild
    before testing: templates → wasm → core → node-wasm → config → printer →
    tailwind-class-sorter → rewriter. Skipping this tests a stale parser.
+
+   **When headers change (`src/include/**`), `rm -rf wasm/obj` first.** The
+   wasm Makefile's dependency tracking does not catch header changes, so an
+   incremental build links stale object files and every parse then fails with
+   `RuntimeError: function signature mismatch`. Symptom to recognise: nearly
+   the *entire* suite fails at `Herb.parse`, including tests untouched by the
+   rebase — that is a build artifact, never a formatter regression. Diagnose
+   by reading one failure's stack (it points into `wasm:/wasm/...`), not by
+   bisecting formatter code. On 2026-08-02 this presented as 1283 failures
+   that a clean rebuild reduced to 3.
 5. Full formatter suite (exclude `test/cli/**`, `test/cli.test.ts` — those
    fail for environment reasons here).
 6. Re-measure the divergence report: capture a fresh corpus, replay, update
@@ -271,6 +281,14 @@ Harness caveat: `samples` arrays in the JSON report are capped at 60 per
 category, so counting categories from samples undercounts and drifts run to
 run. Use `counts` for totals and verify per-category claims by formatting the
 specific input with both printers (`--compare`, or `format(src, { printer })`).
+
+`test/printer-selection.test.ts` needs an input the two printers disagree on.
+As upstream converges, discriminators die: the original one (four attributes
+on a fitting line) stopped working when #1834 adopted width-only wrapping.
+It now uses the blank-line policy (§A), which only changes when the default
+flips. If those tests fail with both printers producing identical output,
+the discriminator converged — pick a new one from the divergence categories
+rather than "fixing" the printer.
 
 Things a future session should know:
 - Parser locations: lines 1-based, columns 0-based **UTF-8 bytes**.
