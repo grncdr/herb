@@ -248,8 +248,11 @@ moved 30 commits ahead. What the rebase taught us:
 
 Run on each rebase onto `upstream/main`:
 
-1. `git fetch upstream origin`. If not behind and origin is in sync, stop —
-   don't create a backup branch for a no-op.
+1. `git fetch --multiple upstream origin`. If not behind and origin is in
+   sync, stop — don't create a backup branch for a no-op. (Plain
+   `git fetch upstream origin` fails: the second argument is read as a
+   refspec, not a second remote, so nothing is fetched and the
+   behind-count then reads 0 off stale refs.)
 2. Back up: `git branch backup/formatter-doc-ir-pre-rebase-<date>` at the old
    tip (local only; these are rebase-equivalent snapshots, so they are not
    pushed — only `d8e7d5ea`, the genuinely different pre-rebase history, is
