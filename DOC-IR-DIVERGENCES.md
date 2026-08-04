@@ -6,7 +6,7 @@ Companion to DOC-IR-DESIGN.md. Produced by the validation harness
 
 Spike code: `javascript/packages/formatter/src/doc-ir/`. First measured
 2026-07-13; re-measured on each rebase onto upstream `main` (latest:
-2026-08-03, base `b490ecd9`).
+2026-08-04, base `96ebd558`).
 
 **Status:** both printers ship side by side behind `formatter.printer` /
 `--printer doc-ir`, default `classic`, so nothing below changes anyone's
@@ -46,7 +46,7 @@ Earlier columns are kept because the *composition* of the difference has
 changed across rebases, not just the totals — upstream has been fixing the
 same bug family, so which inputs diverge moves even when the rate holds.
 
-| Metric | 2026-08-03 (= 08-02) | 2026-08-01 | 2026-07-30 | 2026-07-13 |
+| Metric | 2026-08-04 (= 08-03, 08-02) | 2026-08-01 | 2026-07-30 | 2026-07-13 |
 | --- | --- | --- | --- | --- |
 | Corpus (unique inputs) | 1163 | 1099 | 1081 | 971 |
 | Compared (parse ok, not scaffold/ignored) | 1051 | 987 | 969 | 860 |
@@ -59,7 +59,7 @@ same bug family, so which inputs diverge moves even when the rate holds.
 | Reparse-structure diffs — spike | 108 | 106 | 117 | 113 |
 | Reparse-structure diffs — current formatter (baseline) | 152 | 152 | 151 | 140 |
 | **Spike-only reparse diffs** | **1** (§E, deliberate) | 1 | 1 | 1 |
-| Corpus wall-time — current / spike | 510ms / 439ms | 487ms / 425ms | 485ms / 418ms | 461ms / 408ms |
+| Corpus wall-time — current / spike | 521ms / 449ms | 487ms / 425ms | 485ms / 418ms | 461ms / 408ms |
 
 The exact-match rate moved down ~2 points between 07-13 and 07-30 even though
 both printers got better, for a specific reason: upstream's #1863/#1884 fixed
@@ -117,16 +117,31 @@ spike:    <% if disabled? %> disabled <% end %>
 Whitespace-collapsed these are equal, hence "layout-only"; it is category §C
 (authored-inline control flow is preserved) showing up inside open tags.
 
-**08-03 movement: none.** Rebased onto `b490ecd9` (10 commits). Every metric
-above is byte-identical to the 08-02 measurement — same corpus size, same
-category counts, same reparse counts — hence the shared column. The reason is
-that none of the 10 commits touch `javascript/packages/formatter`: nine are
-linter work (#1954, #1960, #1962, #1963, #1965, #1966, #1967, #1968, #1969)
-and one is the `tsc` 7.0 upgrade (#1956). The only native change is
-`src/analyze/ternary_conditionals.c` (#1969), which pads ternary branch
-bodies with spaces for the new rule's autocorrect; that field feeds linter
-rules, not printing, and moved no measurement. Wall-time drifted
-527/447ms → 510/439ms, which is run-to-run noise, not a change.
+**08-03 and 08-04 movement: none.** Two consecutive rebases (onto `b490ecd9`,
+10 commits, then onto `96ebd558`, 12 commits) moved no metric: all three runs
+are byte-identical — same corpus size, same category counts, same reparse
+counts — hence the shared column. Neither range touches
+`javascript/packages/formatter`. 08-03 was nine linter rules/CLI changes
+(#1954, #1960, #1962–#1969) plus the `tsc` 7.0 upgrade (#1956); 08-04 was
+four more linter rules, the Playground autofix tab (#1974), Ruby
+`Location`/`Position`/`Range` `zero` helpers (#1979), and RBS/Rust/CI
+housekeeping.
+
+Each range carried exactly one native change, and neither reaches printing:
+
+- 08-03, `src/analyze/ternary_conditionals.c` (#1969) pads ternary branch
+  bodies with spaces for the new rule's autocorrect — a linter-facing field.
+- 08-04, `src/prism/prism_helpers.c` (#1976) stops treating a ternary `?` as
+  a `then` keyword. This one *could* have reached the formatter, so it was
+  checked directly rather than inferred from the aggregate: `<% if admin? ?
+  true : false %>`, the `unless` form, and a ternary inside an attribute
+  value all format identically before and after, and the condition is
+  preserved verbatim by both printers. The two ERB-body cases still diverge
+  by category §C (the classic printer expands authored-inline control flow,
+  the spike keeps it), but so does plain `<% if x then %>T<% end %>`, which
+  has no ternary in it — the divergence is §C, not the parser fix.
+
+Wall-time drifted 527/447 → 510/439 → 521/449ms, which is run-to-run noise.
 
 Category composition and every per-category claim below therefore carry over
 from 08-02 unchanged — including §B (#1916 `herb:disable` relocation still
