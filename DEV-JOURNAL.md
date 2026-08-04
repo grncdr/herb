@@ -277,6 +277,20 @@ Run on each rebase onto `upstream/main`:
    the table and the movement notes in DOC-IR-DIVERGENCES.md. Upstream is
    actively fixing the same bug family, so the numbers go stale on almost
    every rebase.
+
+   **`rm -f $CORPUS_FILE` first — the capture appends.** Re-running it in a
+   session that already captured once doubles the file (1281 → 2562 lines).
+   The harness dedupes to unique inputs, so the report still looks sane and
+   the totals still land on the same numbers; the tell is the raw line count,
+   not anything in the report. Delete the report too, so a failed replay
+   cannot be read as a fresh one.
+
+   When a range lands **no** `javascript/packages/formatter` commits, expect
+   every metric to be byte-identical and say so, rather than presenting the
+   same numbers as a new measurement. Still check any native change by hand:
+   confirm it cannot reach printing (parse a construct it touches through
+   both printers), because the aggregate cannot distinguish "no effect" from
+   "no coverage".
 7. `git push --force-with-lease origin feature/formatter-doc-ir`. If the
    lease is refused, stop and report — do not resolve unattended.
 
