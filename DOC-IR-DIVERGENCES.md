@@ -6,7 +6,7 @@ Companion to DOC-IR-DESIGN.md. Produced by the validation harness
 
 Spike code: `javascript/packages/formatter/src/doc-ir/`. First measured
 2026-07-13; re-measured on each rebase onto upstream `main` (latest:
-2026-08-05, base `0796d0fc`).
+2026-08-05, base `26b14569`).
 
 **Status:** both printers ship side by side behind `formatter.printer` /
 `--printer doc-ir`, default `classic`, so nothing below changes anyone's
@@ -54,22 +54,23 @@ same bug family, so which inputs diverge moves even when the rate holds.
 
 | Metric | 2026-08-05 | 2026-08-04 (= 08-03, 08-02) | 2026-08-01 | 2026-07-30 | 2026-07-13 |
 | --- | --- | --- | --- | --- | --- |
-| Corpus (unique inputs) | 1175 | 1163 | 1099 | 1081 | 971 |
-| Compared (parse ok, not scaffold/ignored) | 1062 | 1051 | 987 | 969 | 860 |
-| **Exact match with current formatter** | **875 (82.4%)** | 863 (82.1%) | 815 (82.6%) | 797 (82.2%) | 724 (84.2%) |
-| Exact + blank-line-policy-only diffs | 942 (88.7%) | 930 (88.5%) | 885 (89.7%) | 867 (89.5%) | 792 (92.1%) |
+| Corpus (unique inputs) | 1189 | 1163 | 1099 | 1081 | 971 |
+| Compared (parse ok, not scaffold/ignored) | 1076 | 1051 | 987 | 969 | 860 |
+| **Exact match with current formatter** | **889 (82.6%)** | 863 (82.1%) | 815 (82.6%) | 797 (82.2%) | 724 (84.2%) |
+| Exact + blank-line-policy-only diffs | 956 (88.8%) | 930 (88.5%) | 885 (89.7%) | 867 (89.5%) | 792 (92.1%) |
 | Layout-only diffs (same content, different break points) | 37 | 37 | 27 | 27 | 15 |
 | Content diffs (all in categories below) | 83 | 84 | 75 | 75 | 53 |
 | Spike crashes | 0 | 0 | 0 | 0 | 0 |
-| **Idempotency failures** (format∘format ≠ format) | **0 / 1062** | 0 / 1051 | 0 / 987 | 0 / 969 | 0 / 860 |
+| **Idempotency failures** (format∘format ≠ format) | **0 / 1076** | 0 / 1051 | 0 / 987 | 0 / 969 | 0 / 860 |
 | Reparse-structure diffs — spike | 111 | 108 | 106 | 117 | 113 |
 | Reparse-structure diffs — current formatter (baseline) | 154 | 152 | 152 | 151 | 140 |
 | **Spike-only reparse diffs** | **1** (§E, deliberate) | 1 (§E, deliberate) | 1 | 1 | 1 |
-| Corpus wall-time — current / spike | 518ms / 446ms | 521ms / 449ms | 487ms / 425ms | 485ms / 418ms | 461ms / 408ms |
+| Corpus wall-time — current / spike | 539ms / 454ms | 521ms / 449ms | 487ms / 425ms | 485ms / 418ms | 461ms / 408ms |
 
-The 08-05 column is measured **after** the §R fix landed on the branch. Before
-it, the same run read 871 exact (82.0%), 41 layout-only, 113 spike reparse
-diffs and 3 spike-only ones.
+08-05 carried two rebases and is reported as one column, at its final state
+(base `26b14569`). The two intermediate readings were: at base `0796d0fc`
+before the §R fix — 871 exact (82.0%), 41 layout-only, 113 spike reparse diffs,
+**3** spike-only; and after it — 875 exact (82.4%), 37 layout-only, 111 and 1.
 
 The exact-match rate moved down ~2 points between 07-13 and 07-30 even though
 both printers got better, for a specific reason: upstream's #1863/#1884 fixed
@@ -177,6 +178,29 @@ grew, which is indistinguishable from noise.
 Everything else moved benignly: the corpus grew 1163 → 1175 on #1998's and
 #1991's new tests, and content diffs fell 84 → 83. With the fix in, exact
 matches rose 863 → 875 (82.1% → 82.4%).
+
+**08-05 second rebase (upstream #2015 and 8 other commits) — convergence, in
+the spike's own bug family.** #2015 stops the classic printer deleting
+whitespace between text and an ERB tag inside an `else`/`elsif`/`when`/`in`/
+`rescue`/`ensure` branch: `<span><% if a %>A<% else %>B <%= d %><% end %></span>`
+kept its space in the `if` branch but lost it in every other branch. That is
+the significant-whitespace family this design exists to fix (§5), and the
+spike already produced the corrected output.
+
+The measurement shows it cleanly: the corpus grew by 14 inputs and exact
+matches rose by exactly 14 (875 → 889, 82.4% → 82.6%), with every other
+category unchanged — so all 14 new inputs match byte-for-byte, and nothing
+moved between categories. Verified directly on the issue's reproduction and
+the `elsif` variant: both printers now agree and round-trip the source.
+
+Two `case`/`when` and `begin`/`rescue` inline variants still differ, but only
+by §C (the classic printer expands authored-inline control flow; the spike
+keeps it). The whitespace inside those branches is now preserved by both —
+that part converged.
+
+This is the fourth upstream convergence onto a spike behaviour: #1924 (`<br>`
+instability), #1834 (width-only attribute wrapping, §D), #1998 (nested comment
+indentation, where the spike was behind and followed), and now #2015.
 
 The four `test.fails` cases of the significant-whitespace family (#1729 A–D,
 including the two deferred ones) all produce their target output under the
