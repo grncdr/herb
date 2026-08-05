@@ -299,6 +299,21 @@ category, so counting categories from samples undercounts and drifts run to
 run. Use `counts` for totals and verify per-category claims by formatting the
 specific input with both printers (`--compare`, or `format(src, { printer })`).
 
+Watch `spikeOnlyReparseDiff` on every run — it is the regression signal, and
+it sat at 1 (deliberate, §E) from 07-13 to 08-04. On 2026-08-05 it went to 3
+and caught a real spike defect (§R, nested HTML comment indentation) within
+one rebase of upstream fixing the same defect on their side. Nothing else in
+the report is a regression alarm: exact-match rate drifts with corpus growth
+and says little on its own.
+
+`formatter/src/cli.ts` is the recurring conflict surface — the branch adds
+`--printer`/`--compare` there and upstream keeps reworking the CLI summary
+(#1991 added `SummaryReporter` and skipped-file reporting). Conflicts have so
+far been add/add at the same position with an empty merge base, where keeping
+both sides is correct; check afterwards that the class still has exactly one
+`processFiles` and one `runCompare`, since that shape of conflict happily
+resolves into a syntactically valid file with a method silently dropped.
+
 `test/printer-selection.test.ts` needs an input the two printers disagree on.
 As upstream converges, discriminators die: the original one (four attributes
 on a fitting line) stopped working when #1834 adopted width-only wrapping.
