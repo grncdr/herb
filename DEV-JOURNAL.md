@@ -301,10 +301,20 @@ specific input with both printers (`--compare`, or `format(src, { printer })`).
 
 Watch `spikeOnlyReparseDiff` on every run — it is the regression signal, and
 it sat at 1 (deliberate, §E) from 07-13 to 08-04. On 2026-08-05 it went to 3
-and caught a real spike defect (§R, nested HTML comment indentation) within
-one rebase of upstream fixing the same defect on their side. Nothing else in
-the report is a regression alarm: exact-match rate drifts with corpus growth
-and says little on its own.
+and caught a real spike defect (§R, nested HTML comment indentation, fixed the
+same day) within one rebase of upstream fixing the same defect on their side.
+Nothing else in the report is a regression alarm: exact-match rate drifts with
+corpus growth and says little on its own — it moved only 82.1% → 82.0% while
+that defect was live.
+
+Lesson from that fix: when the classic printer grows a parameter the spike
+"just needs to pass", check whether the spike can even have a value for it.
+There, the answer was no — indentation is layout's property in this design, so
+the argument could not be produced at lowering time and the real fix was to
+stop carrying the comment body as literal text. `literalText`/`literalline`
+suppress re-indentation by design; reach for them only when the content must
+*not* move (raw `pre`/`script` bodies, IE conditional comments), never for
+content that should sit at its node's depth.
 
 `formatter/src/cli.ts` is the recurring conflict surface — the branch adds
 `--printer`/`--compare` there and upstream keeps reworking the CLI summary
