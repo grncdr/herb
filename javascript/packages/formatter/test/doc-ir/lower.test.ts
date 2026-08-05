@@ -186,6 +186,134 @@ describe("doc-ir lowering", () => {
     expect(format(`<!--comment-->`)).toEqual(`<!-- comment -->`)
   })
 
+  describe("multi-line HTML comments", () => {
+    test("body indentation follows the comment's own depth", () => {
+      const source = dedent`
+        <div>
+          <!--
+            <ul>
+              <li>one</li>
+            </ul>
+          -->
+        </div>
+      `
+
+      expect(format(source)).toEqual(source)
+    })
+
+    test("body indentation follows a deeply nested comment", () => {
+      const source = dedent`
+        <div>
+          <div>
+            <div>
+              <!--
+                <p>deep</p>
+              -->
+            </div>
+          </div>
+        </div>
+      `
+
+      expect(format(source)).toEqual(source)
+    })
+
+    test("a top-level comment body sits at one indent level", () => {
+      const source = dedent`
+        <!--
+          <p>a</p>
+        -->
+      `
+
+      expect(format(source)).toEqual(source)
+    })
+
+    test("relative indentation inside the body is preserved, base is not", () => {
+      const source = `<div>\n  <!--\nComment\n    on\nmultiple\nlines\n  -->\n</div>`
+
+      expect(format(source)).toEqual(dedent`
+        <div>
+          <!--
+            Comment
+                on
+            multiple
+            lines
+          -->
+        </div>
+      `)
+    })
+
+    test("a body outdented past its comment is pulled to the body indent", () => {
+      const source = `<div>\n  <!--\n<p>outdented</p>\n  -->\n</div>`
+
+      expect(format(source)).toEqual(dedent`
+        <div>
+          <!--
+            <p>outdented</p>
+          -->
+        </div>
+      `)
+    })
+
+    test("blank lines inside the body carry no indentation", () => {
+      const source = `<div>\n  <!--\n    a\n\n    b\n  -->\n</div>`
+
+      expect(format(source)).toEqual(`<div>\n  <!--\n    a\n\n    b\n  -->\n</div>`)
+    })
+
+    test("content on the opening line flattens the body", () => {
+      const source = `<div>\n  <!-- Comment\n    more -->\n</div>`
+
+      expect(format(source)).toEqual(dedent`
+        <div>
+          <!--
+            Comment
+            more
+          -->
+        </div>
+      `)
+    })
+
+    test("a closing marker glued to the last body line stays glued", () => {
+      const source = `<div>\n  <!--\n    a\n    b -->\n</div>`
+
+      expect(format(source)).toEqual(`<div>\n  <!--\n    a\n    b-->\n</div>`)
+    })
+
+    test("a single glued body line does not accumulate indentation", () => {
+      // The classic printer measures the body's left edge while excluding the
+      // last line, so this shape gains one indent level per pass (4 → 8 → 12).
+      // Deliberate divergence: the body's own indent is the measurement.
+      const source = `<div>\n  <!--\n    a -->\n</div>`
+      const once = format(source)
+
+      expect(once).toEqual(`<div>\n  <!--\n    a-->\n</div>`)
+      expect(format(once)).toEqual(once)
+    })
+
+    test("IE conditional comments are copied verbatim", () => {
+      const source = `<!--[if IE]><p>ie</p><![endif]-->`
+
+      expect(format(source)).toEqual(source)
+    })
+
+    test("nested comments are idempotent", () => {
+      const source = dedent`
+        <div>
+          <div>
+            <!--
+              <ul>
+                <li>one</li>
+              </ul>
+            -->
+          </div>
+        </div>
+      `
+      const once = format(source)
+
+      expect(format(once)).toEqual(once)
+    })
+  })
+
   test("case/when structure", () => {
     const source = dedent`
       <% case status %>

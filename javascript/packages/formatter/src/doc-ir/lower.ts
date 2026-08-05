@@ -73,7 +73,6 @@ import {
 
 import {
   extractHTMLCommentContent,
-  formatHTMLCommentInner,
   formatERBCommentLines,
 } from "../comment-helpers.js"
 
@@ -147,6 +146,49 @@ function containsLineSuffix(doc: Doc): boolean {
     case "fill": return doc.parts.some(containsLineSuffix)
     case "ifBreak": return containsLineSuffix(doc.breakContents) || containsLineSuffix(doc.flatContents)
     default: return false
+  }
+}
+
+/**
+ * Split a multi-line HTML comment body into output lines, keeping each line's
+ * indentation *relative* to the body's own left edge. Absolute indentation is
+ * the layout engine's business, so it is deliberately not represented here.
+ *
+ * `closeOnOwnLine` is false when the author glued the closing marker to the
+ * last body line (`… b -->`), which the classic printer also keeps glued.
+ */
+function htmlCommentBody(rawInner: string): { lines: string[], closeOnOwnLine: boolean } {
+  const sourceLines = rawInner.split("\n")
+
+  // `<!-- text` — the first line starts at the marker rather than at the
+  // body's left edge, so there is no common indent to measure and every line
+  // is flattened (matching the classic printer).
+  if (sourceLines[0].trim() !== "") {
+    return {
+      lines: sourceLines.map(sourceLine => sourceLine.trim()).filter(sourceLine => sourceLine !== ""),
+      closeOnOwnLine: true,
+    }
+  }
+
+  const body = sourceLines.slice(1)
+  const closeOnOwnLine = body.length > 0 && body[body.length - 1].trim() === ""
+  const content = closeOnOwnLine ? body.slice(0, -1) : body
+
+  const indentsOf = (bodyLine: string) => bodyLine.length - bodyLine.trimStart().length
+
+  // Every non-blank body line counts, including the last. The classic printer
+  // excludes the last line here, which makes a single glued body line measure
+  // against 0 and gain an indent level on every pass.
+  const indents = content.filter(bodyLine => bodyLine.trim() !== "").map(indentsOf)
+  const minIndent = indents.length > 0 ? Math.min(...indents) : 0
+
+  return {
+    lines: content.map(bodyLine => {
+      if (bodyLine.trim() === "") return ""
+
+      return " ".repeat(Math.max(0, indentsOf(bodyLine) - minIndent)) + bodyLine.trim()
+    }),
+    closeOnOwnLine,
   }
 }
 
@@ -1082,15 +1124,47 @@ export class Lowerer {
 
   // --- Comments ---
 
+  /**
+   * A multi-line comment body is lowered as a real Doc, not as literal text,
+   * so the layout engine supplies its base indentation and a nested comment
+   * stays aligned with its own `<!--`. Only the body's *relative* indentation
+   * is baked in, as leading spaces on each line.
+   *
+   * The classic printer solves the same problem by threading the enclosing
+   * indentation into `formatHTMLCommentInner` as a string (upstream #1998).
+   * That is not available here — lowering cannot know how deep layout will
+   * place the node — and it is the reason literal text is the wrong carrier:
+   * `literalline` exists precisely to suppress re-indentation.
+   */
   private lowerHTMLComment(node: HTMLCommentNode): Doc {
     const open = node.comment_start?.value ?? ""
     const close = node.comment_end?.value ?? ""
     const rawInner = node.children && node.children.length > 0
       ? extractHTMLCommentContent(node.children)
       : ""
-    const inner = rawInner ? formatHTMLCommentInner(rawInner, this.options.indentWidth) : ""
 
-    return literalText(open + inner + close)
+    if (rawInner.trim() === "") return `${open}${close}`
+
+    const trimmedInner = rawInner.trim()
+
+    // An IE conditional comment guards real markup; it is copied verbatim
+    // rather than treated as a body we may re-indent.
+    if (trimmedInner.startsWith("[if ") && trimmedInner.endsWith("<![endif]")) {
+      return literalText(open + rawInner + close)
+    }
+
+    if (!rawInner.includes("\n")) return `${open} ${trimmedInner} ${close}`
+
+    const { lines, closeOnOwnLine } = htmlCommentBody(rawInner)
+
+    if (lines.length === 0) return `${open} ${trimmedInner} ${close}`
+
+    return [
+      open,
+      indent([hardline, join(hardline, lines)]),
+      ...(closeOnOwnLine ? [hardline] : []),
+      close,
+    ]
   }
 }
 

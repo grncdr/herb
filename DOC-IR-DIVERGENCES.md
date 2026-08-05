@@ -13,7 +13,7 @@ Spike code: `javascript/packages/formatter/src/doc-ir/`. First measured
 output until the default flips (design §9.4). `--compare` prints these
 divergences for a real project.
 
-Two bugs the re-measurement caught, both now fixed on the branch:
+Three bugs the re-measurements caught, all now fixed on the branch:
 
 1. **Idempotency broke (2 inputs)** on glued control flow too long to fit:
    the construct broke internally on pass 1, which made it *authored
@@ -26,6 +26,12 @@ Two bugs the re-measurement caught, both now fixed on the branch:
    Glued ERB body boundaries now lower to plain concatenation, matching the
    rule already applied to inline elements. A hardcoded newline before
    `<% end %>` in rescue/ensure chains, which this exposed, went with it.
+3. **Nested multi-line HTML comments lost their indentation** (2026-08-05):
+   the body and closing `-->` were emitted as though the comment sat at
+   column 0. The body was carried as literal text, which by construction
+   refuses re-indentation; it is now a Doc the layout engine indents. Full
+   account in §R — it is the clearest example so far of the comparison
+   catching something the fixture suite did not.
 
 ## Reproduce
 
@@ -50,16 +56,20 @@ same bug family, so which inputs diverge moves even when the rate holds.
 | --- | --- | --- | --- | --- | --- |
 | Corpus (unique inputs) | 1175 | 1163 | 1099 | 1081 | 971 |
 | Compared (parse ok, not scaffold/ignored) | 1062 | 1051 | 987 | 969 | 860 |
-| **Exact match with current formatter** | **871 (82.0%)** | 863 (82.1%) | 815 (82.6%) | 797 (82.2%) | 724 (84.2%) |
-| Exact + blank-line-policy-only diffs | 938 (88.3%) | 930 (88.5%) | 885 (89.7%) | 867 (89.5%) | 792 (92.1%) |
-| Layout-only diffs (same content, different break points) | 41 | 37 | 27 | 27 | 15 |
+| **Exact match with current formatter** | **875 (82.4%)** | 863 (82.1%) | 815 (82.6%) | 797 (82.2%) | 724 (84.2%) |
+| Exact + blank-line-policy-only diffs | 942 (88.7%) | 930 (88.5%) | 885 (89.7%) | 867 (89.5%) | 792 (92.1%) |
+| Layout-only diffs (same content, different break points) | 37 | 37 | 27 | 27 | 15 |
 | Content diffs (all in categories below) | 83 | 84 | 75 | 75 | 53 |
 | Spike crashes | 0 | 0 | 0 | 0 | 0 |
 | **Idempotency failures** (format∘format ≠ format) | **0 / 1062** | 0 / 1051 | 0 / 987 | 0 / 969 | 0 / 860 |
-| Reparse-structure diffs — spike | 113 | 108 | 106 | 117 | 113 |
+| Reparse-structure diffs — spike | 111 | 108 | 106 | 117 | 113 |
 | Reparse-structure diffs — current formatter (baseline) | 154 | 152 | 152 | 151 | 140 |
-| **Spike-only reparse diffs** | **3** (1 §E deliberate, **2 regression** — §R) | 1 (§E, deliberate) | 1 | 1 | 1 |
-| Corpus wall-time — current / spike | 522ms / 449ms | 521ms / 449ms | 487ms / 425ms | 485ms / 418ms | 461ms / 408ms |
+| **Spike-only reparse diffs** | **1** (§E, deliberate) | 1 (§E, deliberate) | 1 | 1 | 1 |
+| Corpus wall-time — current / spike | 518ms / 446ms | 521ms / 449ms | 487ms / 425ms | 485ms / 418ms | 461ms / 408ms |
+
+The 08-05 column is measured **after** the §R fix landed on the branch. Before
+it, the same run read 871 exact (82.0%), 41 layout-only, 113 spike reparse
+diffs and 3 spike-only ones.
 
 The exact-match rate moved down ~2 points between 07-13 and 07-30 even though
 both printers got better, for a specific reason: upstream's #1863/#1884 fixed
@@ -149,33 +159,24 @@ unconverged) and §D (still resolved). A rebase that lands no formatter
 commits needs no category re-verification; one that lands any does.
 
 **08-05 movement (upstream #1998, #1991, #1970, and 15 other commits) — the
-first rebase since 08-02 that lands formatter commits, and it opens a
-regression.** Upstream #1998 taught the classic printer to preserve the
-indentation of a multi-line HTML comment nested below the top level. The
-spike did not follow, and now emits the pre-#1998 output:
+first rebase since 08-02 that lands formatter commits, and the first that
+caught a spike regression.** Upstream #1998 taught the classic printer to
+preserve the indentation of a multi-line HTML comment nested below the top
+level. The spike did not follow, and emitted the pre-#1998 output, with the
+body *and* the closing `-->` laid out as if the comment sat at column 0, at
+any nesting depth. That one defect moved layout-only 37 → 41 and spike-only
+reparse diffs 1 → 3. **Fixed on the branch the same day (§R)**, which is why
+the column above reads 1 again.
 
-```html
-<div>            classic (correct):     spike:
-  <!--             <!--                   <!--
-    <ul>             <ul>               <ul>
-```
+The harness earned its keep here: `spikeOnlyReparseDiff` had been pinned at 1
+since 07-13, so a move to 3 was unambiguous, and it surfaced within one rebase
+of upstream fixing the same defect on their side. The exact-match rate would
+not have carried the signal — it moved 82.1% → 82.0% across a corpus that also
+grew, which is indistinguishable from noise.
 
-One root cause: `formatHTMLCommentInner` grew a third `baseIndent` parameter
-in #1998, and the spike's comment lowering (`lower.ts`, `lowerHTMLComment`)
-still calls it with two arguments, so the body is laid out as if the comment
-sat at column 0. The closing `-->` lands at column 0 too. It reproduces at
-*any* nesting depth, not only the deep case in the issue.
-
-This single defect accounts for both moves in the table: layout-only 37 → 41
-and spike-only reparse diffs 1 → 3. It is a **regression, not an intentional
-divergence** — the first the harness has surfaced — so it is tracked in §R
-below rather than among the categories, and it is why the spike-only reparse
-row is no longer "1, deliberate". Everything else moved for benign reasons:
-the corpus grew 1163 → 1175 on #1998's and #1991's new tests, exact matches
-rose 863 → 871, and content diffs fell 84 → 83.
-
-Not yet fixed here: this run refreshes the measurement only. The fix is not
-the one-line argument pass it looks like — see §R.
+Everything else moved benignly: the corpus grew 1163 → 1175 on #1998's and
+#1991's new tests, and content diffs fell 84 → 83. With the fix in, exact
+matches rose 863 → 875 (82.1% → 82.4%).
 
 The four `test.fails` cases of the significant-whitespace family (#1729 A–D,
 including the two deferred ones) all produce their target output under the
@@ -312,11 +313,36 @@ authored line structure, exactly like the current formatter.
 hazardous and not a formatting fixpoint (it reformats to `<%% >`). The spike
 emits `<% %>` / `<%# %>`, which are stable.
 
-## R. Regression: nested multi-line HTML comments lose their indentation (4 diffs, 2 of them spike-only reparse diffs)
+### K. A single glued comment body line keeps its indent instead of growing one (0 corpus diffs)
 
-**Open. Unlike every category above, this is not a decision — it is a defect
-in the spike.** Found by the 08-05 rebase; upstream fixed the same defect in
-the classic printer in #1998.
+Introduced by the §R fix, and the only intentional divergence in it. For
+
+```html
+<div>
+  <!--
+    a -->
+</div>
+```
+
+the classic printer measures the body's left edge while *excluding* the last
+line — and here the only body line is also the last, so it measures against
+column 0 and adds a full level. That makes the shape non-idempotent: the body
+gains an indent level on every pass (4 → 8 → 12 → …), which the harness's
+idempotency check would fail. The spike measures every non-blank body line,
+so `a` stays where the author put it and reformatting is a fixpoint.
+
+No corpus input has this shape, so it costs nothing measurable; it is recorded
+because it is a deliberate refusal to match the classic printer byte-for-byte.
+
+## R. Regression (fixed): nested multi-line HTML comments lost their indentation
+
+**Found by the 08-05 rebase, fixed the same day** — the first genuine
+regression the harness has surfaced, as opposed to a deliberate difference.
+Upstream fixed the same defect in the classic printer in #1998, one rebase
+earlier. Kept here as the worked example of what the comparison is for.
+
+The spike laid out the comment body, and the closing `-->`, as though the
+comment sat at column 0, at any nesting depth:
 
 ```html
 <div>
@@ -328,32 +354,33 @@ the classic printer in #1998.
     </div>
 ```
 
-The comment body, and the closing `-->`, are laid out as though the comment
-were at column 0. It reproduces at any nesting depth.
+`formatHTMLCommentInner` gained a `baseIndent` third parameter in #1998 and
+the spike called it with two — but **passing the argument was not the fix**.
+The spike had no `baseIndent` to pass: it lowered the comment through
+`literalText`, whose `literalline` separators exist precisely to suppress
+re-indentation, and lowering cannot know how deep the layout engine will place
+a node. Indentation is a layout property in this design, and that lowering
+tried to carry it as string content.
 
-The proximate cause is that `formatHTMLCommentInner` gained a `baseIndent`
-third parameter in #1998 and the spike still calls it with two. **Passing the
-argument is not the fix**, because the spike does not have a `baseIndent` to
-pass: it lowers the comment via `literalText`, i.e. `literalline` separators,
-which by definition suppress re-indentation, and lowering has no idea how
-deep the layout engine will place the node. Indentation is a layout property
-in this design, and this lowering tries to bake it in as string content.
-
-The structural fix is to stop treating the body as literal text and lower it
-as a real Doc, letting the engine indent it:
+The fix stops treating the body as literal text and lowers it as a Doc, so the
+engine supplies the base indentation:
 
 ```ts
-["<!--", indent([hardline, join(hardline, bodyLines)]), hardline, "-->"]
+[open, indent([hardline, join(hardline, bodyLines)]), hardline, close]
 ```
 
-which needs the body's *relative* internal indentation preserved (the third
-corpus case has a deliberately ragged body) while its *base* indentation
-comes from the enclosing `indent`s. That is a genuine piece of work with its
-own regression risk against the comment fixtures, so it is deliberately not
-bundled into a measurement refresh. It is the one item blocking a clean
-"spike-only reparse diffs: 1, deliberate" line.
+`bodyLines` keeps only each line's indentation *relative* to the body's own
+left edge (one corpus case has a deliberately ragged body). Two shapes needed
+care: content on the opening line (`<!-- text`) has no measurable left edge, so
+the body flattens, as it does in the classic printer; and a closing marker the
+author glued to the last body line (`… b -->`) stays glued, so the `hardline`
+before it is conditional. §K records the one place the fix declines to copy the
+classic printer. Covered by 11 cases in `test/doc-ir/lower.test.ts`.
 
-## Layout-only diffs (41)
+Result: layout-only 41 → 37, spike-only reparse diffs 3 → 1 (§E only), exact
+matches 871 → 875, idempotency failures still 0.
+
+## Layout-only diffs (37)
 
 Same content and spacing, different wrap points. Sources:
 
@@ -363,12 +390,11 @@ Same content and spacing, different wrap points. Sources:
 - Fill wrapping packs words up to the limit where the current word-wrapper
   sometimes breaks a word earlier (both stay ≤ 80 columns).
 - ERB control flow in attribute position (see the 08-02 movement note).
-- The nested-comment regression in §R (4 of them).
+- One inline element whose only child is an authored-multiline comment
+  (`<span>\n  <!-- … -->\n</span>`), which the spike inlines because it fits.
 
 ## Known limitations of the spike (not design decisions)
 
-- **Open regression:** nested multi-line HTML comments lose their
-  indentation — see §R.
 - `HTMLConditionalElementNode` (element with conditional open *and* close
   tags) has a basic lowering; only smoke-tested against the corpus.
 - The `-6`-free class wrapping and the whole-line width accounting produce
