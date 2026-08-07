@@ -6,7 +6,7 @@ Companion to DOC-IR-DESIGN.md. Produced by the validation harness
 
 Spike code: `javascript/packages/formatter/src/doc-ir/`. First measured
 2026-07-13; re-measured on each rebase onto upstream `main` (latest:
-2026-08-06, base `30ba2a09`).
+2026-08-07, base `25c4a90b`).
 
 **Status:** both printers ship side by side behind `formatter.printer` /
 `--printer doc-ir`, default `classic`, so nothing below changes anyone's
@@ -52,7 +52,7 @@ Earlier columns are kept because the *composition* of the difference has
 changed across rebases, not just the totals — upstream has been fixing the
 same bug family, so which inputs diverge moves even when the rate holds.
 
-| Metric | 2026-08-06 (= 08-05) | 2026-08-04 (= 08-03, 08-02) | 2026-08-01 | 2026-07-30 | 2026-07-13 |
+| Metric | 2026-08-07 (= 08-06, 08-05) | 2026-08-04 (= 08-03, 08-02) | 2026-08-01 | 2026-07-30 | 2026-07-13 |
 | --- | --- | --- | --- | --- | --- |
 | Corpus (unique inputs) | 1189 | 1163 | 1099 | 1081 | 971 |
 | Compared (parse ok, not scaffold/ignored) | 1076 | 1051 | 987 | 969 | 860 |
@@ -65,12 +65,12 @@ same bug family, so which inputs diverge moves even when the rate holds.
 | Reparse-structure diffs — spike | 111 | 108 | 106 | 117 | 113 |
 | Reparse-structure diffs — current formatter (baseline) | 154 | 152 | 152 | 151 | 140 |
 | **Spike-only reparse diffs** | **1** (§E, deliberate) | 1 (§E, deliberate) | 1 | 1 | 1 |
-| Corpus wall-time — current / spike | 545ms / 456ms | 521ms / 449ms | 487ms / 425ms | 485ms / 418ms | 461ms / 408ms |
+| Corpus wall-time — current / spike | 555ms / 460ms | 521ms / 449ms | 487ms / 425ms | 485ms / 418ms | 461ms / 408ms |
 
-08-05 carried two rebases and is reported with 08-06 as one column, at its
-final state (base `30ba2a09`). The two intermediate readings on 08-05 were: at
-base `0796d0fc` before the §R fix — 871 exact (82.0%), 41 layout-only, 113
-spike reparse diffs, **3** spike-only; and after it — 875 exact (82.4%), 37
+08-05 carried two rebases and is reported with 08-06 and 08-07 as one column,
+at its final state (base `25c4a90b`). The two intermediate readings on 08-05
+were: at base `0796d0fc` before the §R fix — 871 exact (82.0%), 41 layout-only,
+113 spike reparse diffs, **3** spike-only; and after it — 875 exact (82.4%), 37
 layout-only, 111 and 1.
 
 The exact-match rate moved down ~2 points between 07-13 and 07-30 even though
@@ -224,6 +224,23 @@ all-clear, so the native changes were checked by hand rather than inferred:
 
 Headers changed here, and so did `wasm/Makefile`, so this rebase needed the
 full `rm -rf wasm/obj` rebuild (journal step 4).
+
+**08-07 movement: none** (20 commits, base `25c4a90b`). Formatter package
+untouched again; the range is Language Server features (partial hover,
+definition, extract-to-partial), linter fixes, and Rust/Playground work. Two
+changes were checked rather than assumed:
+
+- **`src/analyze/render_nodes.c` (#2044)**, the only native change, stops
+  flagging `render layout:` as missing its block when a block is in fact
+  present. That is error reporting, not structure — and no corpus input has
+  the shape, so the aggregate could not have spoken for it either way.
+  Checked directly: `<%= render layout: "shared/box" do %>…<% end %>` parses
+  with zero errors and both printers agree and round-trip it. (The inline
+  one-liner variant still differs by §C, as it did before.)
+- **`javascript/packages/core` (#2058)** matters because the formatter
+  depends on it, but the diff is two new modules plus an alphabetised export
+  list — additive, no behaviour change. (Upstream's re-sort left a duplicate
+  `html-constants` export line; harmless in ESM.)
 
 The four `test.fails` cases of the significant-whitespace family (#1729 A–D,
 including the two deferred ones) all produce their target output under the
