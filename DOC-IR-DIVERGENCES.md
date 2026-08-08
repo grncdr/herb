@@ -6,7 +6,7 @@ Companion to DOC-IR-DESIGN.md. Produced by the validation harness
 
 Spike code: `javascript/packages/formatter/src/doc-ir/`. First measured
 2026-07-13; re-measured on each rebase onto upstream `main` (latest:
-2026-08-07, base `25c4a90b`).
+2026-08-08, base `9a51d724`).
 
 **Status:** both printers ship side by side behind `formatter.printer` /
 `--printer doc-ir`, default `classic`, so nothing below changes anyone's
@@ -52,26 +52,37 @@ Earlier columns are kept because the *composition* of the difference has
 changed across rebases, not just the totals — upstream has been fixing the
 same bug family, so which inputs diverge moves even when the rate holds.
 
-| Metric | 2026-08-07 (= 08-06, 08-05) | 2026-08-04 (= 08-03, 08-02) | 2026-08-01 | 2026-07-30 | 2026-07-13 |
-| --- | --- | --- | --- | --- | --- |
-| Corpus (unique inputs) | 1189 | 1163 | 1099 | 1081 | 971 |
-| Compared (parse ok, not scaffold/ignored) | 1076 | 1051 | 987 | 969 | 860 |
-| **Exact match with current formatter** | **889 (82.6%)** | 863 (82.1%) | 815 (82.6%) | 797 (82.2%) | 724 (84.2%) |
-| Exact + blank-line-policy-only diffs | 956 (88.8%) | 930 (88.5%) | 885 (89.7%) | 867 (89.5%) | 792 (92.1%) |
-| Layout-only diffs (same content, different break points) | 37 | 37 | 27 | 27 | 15 |
-| Content diffs (all in categories below) | 83 | 84 | 75 | 75 | 53 |
-| Spike crashes | 0 | 0 | 0 | 0 | 0 |
-| **Idempotency failures** (format∘format ≠ format) | **0 / 1076** | 0 / 1051 | 0 / 987 | 0 / 969 | 0 / 860 |
-| Reparse-structure diffs — spike | 111 | 108 | 106 | 117 | 113 |
-| Reparse-structure diffs — current formatter (baseline) | 154 | 152 | 152 | 151 | 140 |
-| **Spike-only reparse diffs** | **1** (§E, deliberate) | 1 (§E, deliberate) | 1 | 1 | 1 |
-| Corpus wall-time — current / spike | 555ms / 460ms | 521ms / 449ms | 487ms / 425ms | 485ms / 418ms | 461ms / 408ms |
+| Metric | 2026-08-08 | 2026-08-07 (= 08-06, 08-05) | 2026-08-04 (= 08-03, 08-02) | 2026-08-01 | 2026-07-30 | 2026-07-13 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Corpus (unique inputs) | 1204 | 1189 | 1163 | 1099 | 1081 | 971 |
+| Compared (parse ok, not scaffold/ignored) | 1091 | 1076 | 1051 | 987 | 969 | 860 |
+| **Exact match with current formatter** | **896 (82.1%)** | 889 (82.6%) | 863 (82.1%) | 815 (82.6%) | 797 (82.2%) | 724 (84.2%) |
+| Exact + blank-line-policy-only diffs | 963 (88.3%) | 956 (88.8%) | 930 (88.5%) | 885 (89.7%) | 867 (89.5%) | 792 (92.1%) |
+| Layout-only diffs (same content, different break points) | 44 | 37 | 37 | 27 | 27 | 15 |
+| Content diffs (all in categories below) | 84 | 83 | 84 | 75 | 75 | 53 |
+| Spike crashes | 0 | 0 | 0 | 0 | 0 | 0 |
+| **Idempotency failures** (format∘format ≠ format) | **0 / 1091** | 0 / 1076 | 0 / 1051 | 0 / 987 | 0 / 969 | 0 / 860 |
+| Reparse-structure diffs — spike | 113 | 111 | 108 | 106 | 117 | 113 |
+| Reparse-structure diffs — current formatter (baseline) | 155 | 154 | 152 | 152 | 151 | 140 |
+| **Spike-only reparse diffs** | **2** (1 §E deliberate, **1 regression** — §S) | 1 (§E, deliberate) | 1 (§E, deliberate) | 1 | 1 | 1 |
+| Corpus wall-time — current / spike | 549ms / 462ms | 555ms / 460ms | 521ms / 449ms | 487ms / 425ms | 485ms / 418ms | 461ms / 408ms |
 
 08-05 carried two rebases and is reported with 08-06 and 08-07 as one column,
 at its final state (base `25c4a90b`). The two intermediate readings on 08-05
 were: at base `0796d0fc` before the §R fix — 871 exact (82.0%), 41 layout-only,
 113 spike reparse diffs, **3** spike-only; and after it — 875 exact (82.4%), 37
 layout-only, 111 and 1.
+
+**Suite caveat from 08-08 onward:** three rewriter/Tailwind-sorter integration
+tests fail (`test/rewriters/formatter-integration.test.ts` ×2,
+`test/rewriters/custom-rewriters.test.ts` ×1) — the sorter loads but leaves
+class order untouched. They fail identically on plain `upstream/main`, so they
+are upstream's, not this branch's; `tailwindcss` 3.4.19 is installed, so it is
+not a missing peer dependency. Suspect #2073 (bundles now externalise declared
+dependencies instead of inlining them), which rewrote the rewriter's rollup
+config in this same range. Unrelated to the printer: the harness replays
+captured inputs through both printers directly and never goes through a
+rewriter.
 
 The exact-match rate moved down ~2 points between 07-13 and 07-30 even though
 both printers got better, for a specific reason: upstream's #1863/#1884 fixed
@@ -242,6 +253,38 @@ changes were checked rather than assumed:
   list — additive, no behaviour change. (Upstream's re-sort left a duplicate
   `html-constants` export line; harmless in ESM.)
 
+**08-08 movement (upstream #2059 and 21 other commits) — a second spike
+regression, this one destructive.** #2059 teaches the classic printer to
+preserve *author-expanded* multi-line ERB tags: where the author put `<%=` on
+a line of its own and `%>` on a line of its own, that shape is kept. The spike
+pulls the code up onto the opening delimiter and the closing delimiter up onto
+the last code line.
+
+Its 15 new corpus inputs split 7 exact / 7 layout-only / 1 content diff, which
+is why layout-only rose 37 → 44 and the exact *rate* slipped 82.6% → 82.1%
+while the count rose 889 → 896. Seven of those are cosmetic — same code,
+delimiters placed differently:
+
+```erb
+author + classic:        spike:
+<%=                      <%= link_to(
+  link_to(                   "First",
+    "First",                 url
+    url                    ) %>
+  )
+%>
+```
+
+The eighth is not cosmetic, and it is why spike-only reparse diffs went 1 → 2:
+with a heredoc in the tag, pulling `%>` up puts it on the terminator line, so
+`TEXT %>` stops terminating the heredoc and the emitted Ruby no longer parses
+as the author's. Tracked as **§S**, open.
+
+Note what the two signals did here. The exact-match rate *fell* while the
+printer's agreement improved on 7 of 15 new inputs — noise, as usual.
+`spikeOnlyReparseDiff` moved by exactly one, and that one was the only input
+in the whole corpus whose output changed meaning.
+
 The four `test.fails` cases of the significant-whitespace family (#1729 A–D,
 including the two deferred ones) all produce their target output under the
 spike (`test/doc-ir/lower.test.ts`).
@@ -398,6 +441,41 @@ so `a` stays where the author put it and reformatting is a fixpoint.
 No corpus input has this shape, so it costs nothing measurable; it is recorded
 because it is a deliberate refusal to match the classic printer byte-for-byte.
 
+## S. Regression (open): author-expanded multi-line ERB tags are collapsed, breaking heredocs
+
+**Open. A defect in the spike, not a decision.** Found by the 08-08 rebase;
+upstream's #2059 fixed the same question on their side by preserving the
+authored shape.
+
+Where the author expanded an ERB tag — `<%=` alone on its line, `%>` alone on
+its line — the spike pulls the code up onto the opening delimiter and the
+closing delimiter onto the last code line. On 7 corpus inputs that is merely
+cosmetic (§layout-only). On the eighth it changes what the Ruby means:
+
+```erb
+source + classic:              spike:
+<%=                            <%= tag.pre(<<~TEXT)
+  tag.pre(<<~TEXT)                 significant
+    significant                      leading
+      leading                    whitespace
+    whitespace                   TEXT %>
+  TEXT
+%>
+```
+
+`TEXT %>` is no longer a heredoc terminator — a terminator line may not carry
+trailing content — so the output is not the author's program. This is the
+first spike divergence that produces invalid Ruby rather than different
+whitespace, which is why it is filed here and not among the categories.
+
+The likely shape of the fix, by analogy with §R: the ERB tag's inner code is
+currently normalised into a single-line form and re-emitted, so the authored
+line structure is discarded before layout ever sees it. An authored newline
+between the opening delimiter and the code is a fact the gap classifier (§5)
+already knows how to represent — a `hardline` in the tag's Doc — and heredoc
+bodies are content that must not move at all, i.e. the one legitimate use of
+`literalline` (see §R for the converse mistake). Not yet attempted.
+
 ## R. Regression (fixed): nested multi-line HTML comments lost their indentation
 
 **Found by the 08-05 rebase, fixed the same day** — the first genuine
@@ -444,7 +522,7 @@ classic printer. Covered by 11 cases in `test/doc-ir/lower.test.ts`.
 Result: layout-only 41 → 37, spike-only reparse diffs 3 → 1 (§E only), exact
 matches 871 → 875, idempotency failures still 0.
 
-## Layout-only diffs (37)
+## Layout-only diffs (44)
 
 Same content and spacing, different wrap points. Sources:
 
@@ -456,9 +534,13 @@ Same content and spacing, different wrap points. Sources:
 - ERB control flow in attribute position (see the 08-02 movement note).
 - One inline element whose only child is an authored-multiline comment
   (`<span>\n  <!-- … -->\n</span>`), which the spike inlines because it fits.
+- Author-expanded multi-line ERB tags collapsed onto their delimiters (7 of
+  them) — the cosmetic half of §S.
 
 ## Known limitations of the spike (not design decisions)
 
+- **Open regression:** author-expanded multi-line ERB tags are collapsed,
+  which breaks heredocs — see §S.
 - `HTMLConditionalElementNode` (element with conditional open *and* close
   tags) has a basic lowering; only smoke-tested against the corpus.
 - The `-6`-free class wrapping and the whole-line width accounting produce
