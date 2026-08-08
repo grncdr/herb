@@ -273,6 +273,16 @@ Run on each rebase onto `upstream/main`:
    that a clean rebuild reduced to 3.
 5. Full formatter suite (exclude `test/cli/**`, `test/cli.test.ts` — those
    fail for environment reasons here).
+
+   **Known-failing since 2026-08-08, upstream's not ours:** three
+   rewriter/Tailwind-sorter integrations (`test/rewriters/*`). The sorter
+   loads — the `preCount` assertions pass — but leaves class order untouched.
+   Confirmed by running `test/rewriters/` on a detached `upstream/main`: same
+   three failures, so it is not the branch. `tailwindcss` is installed, so it
+   is not a missing peer. Suspect #2073, which made bundles externalise their
+   declared dependencies instead of inlining them. Before blaming the branch
+   for any new suite failure, re-run that file on detached `upstream/main`
+   first — it costs one checkout and settles it.
 6. Re-measure the divergence report: capture a fresh corpus, replay, update
    the table and the movement notes in DOC-IR-DIVERGENCES.md. Upstream is
    actively fixing the same bug family, so the numbers go stale on almost
