@@ -6,7 +6,7 @@ Companion to DOC-IR-DESIGN.md. Produced by the validation harness
 
 Spike code: `javascript/packages/formatter/src/doc-ir/`. First measured
 2026-07-13; re-measured on each rebase onto upstream `main` (latest:
-2026-08-08, base `9a51d724`).
+2026-08-09, base `6cf26f58`).
 
 **Status:** both printers ship side by side behind `formatter.printer` /
 `--printer doc-ir`, default `classic`, so nothing below changes anyone's
@@ -52,7 +52,7 @@ Earlier columns are kept because the *composition* of the difference has
 changed across rebases, not just the totals — upstream has been fixing the
 same bug family, so which inputs diverge moves even when the rate holds.
 
-| Metric | 2026-08-08 | 2026-08-07 (= 08-06, 08-05) | 2026-08-04 (= 08-03, 08-02) | 2026-08-01 | 2026-07-30 | 2026-07-13 |
+| Metric | 2026-08-09 (= 08-08) | 2026-08-07 (= 08-06, 08-05) | 2026-08-04 (= 08-03, 08-02) | 2026-08-01 | 2026-07-30 | 2026-07-13 |
 | --- | --- | --- | --- | --- | --- | --- |
 | Corpus (unique inputs) | 1204 | 1189 | 1163 | 1099 | 1081 | 971 |
 | Compared (parse ok, not scaffold/ignored) | 1091 | 1076 | 1051 | 987 | 969 | 860 |
@@ -73,16 +73,12 @@ were: at base `0796d0fc` before the §R fix — 871 exact (82.0%), 41 layout-onl
 113 spike reparse diffs, **3** spike-only; and after it — 875 exact (82.4%), 37
 layout-only, 111 and 1.
 
-**Suite caveat from 08-08 onward:** three rewriter/Tailwind-sorter integration
-tests fail (`test/rewriters/formatter-integration.test.ts` ×2,
-`test/rewriters/custom-rewriters.test.ts` ×1) — the sorter loads but leaves
-class order untouched. They fail identically on plain `upstream/main`, so they
-are upstream's, not this branch's; `tailwindcss` 3.4.19 is installed, so it is
-not a missing peer dependency. Suspect #2073 (bundles now externalise declared
-dependencies instead of inlining them), which rewrote the rewriter's rollup
-config in this same range. Unrelated to the printer: the harness replays
-captured inputs through both printers directly and never goes through a
-rewriter.
+**Suite caveat, 08-08 only — resolved 08-09.** Three rewriter/Tailwind-sorter
+integration tests failed on 08-08: the sorter loaded but left class order
+untouched. They failed identically on plain `upstream/main`, so they were never
+this branch's, and the harness never goes through a rewriter in any case.
+Upstream's #2101 (make `tailwindcss` an optional peer dependency) fixed them;
+the suite is fully green again at 08-09.
 
 The exact-match rate moved down ~2 points between 07-13 and 07-30 even though
 both printers got better, for a specific reason: upstream's #1863/#1884 fixed
@@ -284,6 +280,23 @@ Note what the two signals did here. The exact-match rate *fell* while the
 printer's agreement improved on 7 of 15 new inputs — noise, as usual.
 `spikeOnlyReparseDiff` moved by exactly one, and that one was the only input
 in the whole corpus whose output changed meaning.
+
+**08-09 movement: none** (22 commits, base `6cf26f58`). Formatter package
+untouched; every figure repeats 08-08, and §S stays open. Two notes:
+
+- The 08-08 rewriter failures are fixed upstream by #2101. Suite green.
+- **#2112 converts dynamic boolean attributes to conditional attributes** —
+  an attribute-shape change, so it was checked rather than inferred:
+  `<%= tag.div hidden: a != b do %>`, `tag.input disabled: user.locked?`, and
+  a hand-written `<div <% if a %>hidden<% end %>>` all format identically
+  under both printers. The transform is an analyze-level rewrite the Engine
+  consumes; the formatter prints the ERB the author wrote, so it never sees
+  the converted form.
+
+This rebase also needed an environment repair before it would build at all —
+template generation had been aborting midway, silently leaving a generated
+Action View handler table stale. See the journal; it cost a full debugging
+detour and would have looked like an upstream build break.
 
 The four `test.fails` cases of the significant-whitespace family (#1729 A–D,
 including the two deferred ones) all produce their target output under the

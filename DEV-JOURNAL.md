@@ -271,18 +271,41 @@ Run on each rebase onto `upstream/main`:
    by reading one failure's stack (it points into `wasm:/wasm/...`), not by
    bisecting formatter code. On 2026-08-02 this presented as 1283 failures
    that a clean rebuild reduced to 3.
+
+   **Template generation fails silently — check it, don't count its output.**
+   `Herb::Bootstrap.generate_templates` globs `templates/**/*.erb` and renders
+   each with no rescue, so the *first* template that raises kills the loop and
+   every template sorting after it is skipped. Nothing in the exit status says
+   so: pipe it through `grep -c Rendering` and you get a plausible number.
+
+   In this devbox it raises at `templates/template.rb`'s `prism_config_path`:
+   with no `vendor/prism/`, it falls back to `Herb::Bootstrap
+   .find_prism_gem_path`, which returns nil here (bundler cannot install), and
+   `File.join` dies on it. Since upstream added `templates/rust/src/prism/*`
+   on 2026-08-07, that abort lands before `templates/src/**`, so the generated
+   Action View handler table stops being regenerated — silently, because an
+   unchanged file is normal output.
+
+   It surfaced on 2026-08-09 as a *link* error, not a generation error:
+   `wasm-ld: undefined symbol: detect_stylesheet_link_tag`, after #2083 added
+   a helper whose handler lives in that generated table. Reading it as an
+   upstream build break is the natural mistake.
+
+   One-time repair (`vendor/` is gitignored, so this is environment, not repo):
+
+   ```sh
+   ruby -e 'require_relative "lib/herb/bootstrap"; Herb::Bootstrap.vendor_prism(prism_gem_path: "/home/ubuntu/code/marcoroth/herb/vendor/bundle/ruby/4.0.0/bundler/gems/prism-c0e37816e97e")'
+   ```
+
+   Afterwards, run generation to a log and assert on it — `grep -E "TypeError|no
+   implicit conversion"` must find nothing — rather than trusting a count.
 5. Full formatter suite (exclude `test/cli/**`, `test/cli.test.ts` — those
    fail for environment reasons here).
 
-   **Known-failing since 2026-08-08, upstream's not ours:** three
-   rewriter/Tailwind-sorter integrations (`test/rewriters/*`). The sorter
-   loads — the `preCount` assertions pass — but leaves class order untouched.
-   Confirmed by running `test/rewriters/` on a detached `upstream/main`: same
-   three failures, so it is not the branch. `tailwindcss` is installed, so it
-   is not a missing peer. Suspect #2073, which made bundles externalise their
-   declared dependencies instead of inlining them. Before blaming the branch
-   for any new suite failure, re-run that file on detached `upstream/main`
-   first — it costs one checkout and settles it.
+   The three rewriter/Tailwind-sorter integrations that failed on 2026-08-08
+   were upstream's, and #2101 fixed them on 08-09. The technique is the part
+   worth keeping: before blaming the branch for a new suite failure, re-run
+   that file on a detached `upstream/main`. One checkout settles it.
 6. Re-measure the divergence report: capture a fresh corpus, replay, update
    the table and the movement notes in DOC-IR-DIVERGENCES.md. Upstream is
    actively fixing the same bug family, so the numbers go stale on almost
