@@ -260,7 +260,13 @@ Run on each rebase onto `upstream/main`:
 3. `git rebase upstream/main`.
 4. **If any of `src/`, `include/`, `templates/`, `wasm/` changed**, rebuild
    before testing: templates → wasm → core → node-wasm → config → printer →
-   tailwind-class-sorter → rewriter. Skipping this tests a stale parser.
+   tailwind-class-sorter → rewriter → **formatter**. Skipping this tests a
+   stale parser; skipping the last one tests a stale CLI binary (see step 5).
+
+   `wasm/Makefile` resolves prism itself via `bundle show prism`, so plain
+   `make ../javascript/packages/node-wasm/build/libherb.js` is enough — the
+   `PRISM_PATH=…` override this journal used to carry was only needed while
+   bundler was broken.
 
    **When headers change (`src/include/**`), `rm -rf wasm/obj` first.** The
    wasm Makefile's dependency tracking does not catch header changes, so an
@@ -278,29 +284,41 @@ Run on each rebase onto `upstream/main`:
    every template sorting after it is skipped. Nothing in the exit status says
    so: pipe it through `grep -c Rendering` and you get a plausible number.
 
-   In this devbox it raises at `templates/template.rb`'s `prism_config_path`:
-   with no `vendor/prism/`, it falls back to `Herb::Bootstrap
-   .find_prism_gem_path`, which returns nil here (bundler cannot install), and
-   `File.join` dies on it. Since upstream added `templates/rust/src/prism/*`
-   on 2026-08-07, that abort lands before `templates/src/**`, so the generated
-   Action View handler table stops being regenerated — silently, because an
-   unchanged file is normal output.
-
-   It surfaced on 2026-08-09 as a *link* error, not a generation error:
-   `wasm-ld: undefined symbol: detect_stylesheet_link_tag`, after #2083 added
-   a helper whose handler lives in that generated table. Reading it as an
-   upstream build break is the natural mistake.
-
-   One-time repair (`vendor/` is gitignored, so this is environment, not repo):
+   It raises inside `templates/template.rb`'s `prism_config_path`, which needs
+   to locate the prism gem. **Run generation under `bundle exec`** — plain
+   `ruby` cannot see a git-sourced gem, so `find_prism_gem_path` returns nil
+   and `File.join` dies on it:
 
    ```sh
-   ruby -e 'require_relative "lib/herb/bootstrap"; Herb::Bootstrap.vendor_prism(prism_gem_path: "/home/ubuntu/code/marcoroth/herb/vendor/bundle/ruby/4.0.0/bundler/gems/prism-c0e37816e97e")'
+   bundle exec ruby -e 'require_relative "lib/herb/bootstrap"; Herb::Bootstrap.generate_templates'
    ```
 
-   Afterwards, run generation to a log and assert on it — `grep -E "TypeError|no
-   implicit conversion"` must find nothing — rather than trusting a count.
-5. Full formatter suite (exclude `test/cli/**`, `test/cli.test.ts` — those
-   fail for environment reasons here).
+   **Assert on the count, don't eyeball it.** Templates processed
+   (`grep -cE "^(Rendering|\[unchanged\])"`) must equal `find templates -name
+   '*.erb' | wc -l` — 61 as of 2026-08-09. Grepping for `TypeError` also works
+   but is weaker; a partial run is the failure mode, and only the count sees it.
+
+   History, because the symptom points at the wrong culprit: while bundler was
+   broken here (2026-08-07 to 08-09) this aborted at the prism templates, and
+   `templates/rust/**` sorts before `templates/src/**`, so the generated Action
+   View handler table silently stopped updating. It surfaced on 08-09 as a
+   *link* error — `wasm-ld: undefined symbol: detect_stylesheet_link_tag` —
+   after #2083 added a helper whose handler lives in that table, which reads
+   exactly like upstream shipping a broken build. The stopgap then was
+   `Herb::Bootstrap.vendor_prism(prism_gem_path: …)`, populating `vendor/prism/`
+   as a fallback source for the config. With bundler working that is
+   unnecessary and was removed — and it is worth *keeping* removed, since a
+   stale vendored copy would mask the same failure again.
+5. Full formatter suite — **no exclusions**. `yarn vitest run` covers the CLI
+   too.
+
+   The old advice to exclude `test/cli/**` and `test/cli.test.ts` "for
+   environment reasons" was wrong: those tests spawn the built binary from
+   `dist/`, which this loop never rebuilt, so they were asserting against a
+   month-old CLI. Build the formatter package (step 4) and all 87 pass. This
+   matters beyond tidiness — the branch's own `--printer` / `--compare` CLI
+   code, and the conflict resolution it needed against upstream's CLI rework
+   in #1991, had no test coverage at all under the old exclusion.
 
    The three rewriter/Tailwind-sorter integrations that failed on 2026-08-08
    were upstream's, and #2101 fixed them on 08-09. The technique is the part
