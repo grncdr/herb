@@ -34,6 +34,7 @@ import {
   XMLDeclarationNode,
   CDATANode,
   ERBContentNode,
+  ERBCommentNode,
   ERBOpenTagNode,
   ERBBlockNode,
   ERBEndNode,
@@ -59,6 +60,7 @@ import {
   getCombinedAttributeName,
   isNode,
   isERBCommentNode,
+  isInlineRubyCommentNode,
   TOKEN_LIST_ATTRIBUTES,
 } from "@herb-tools/core"
 
@@ -67,6 +69,8 @@ import {
   isInlineElement,
   isContentPreserving,
   isFrontmatter,
+  isERBTagNode,
+  endsWithHeredocTerminator,
   isHerbDisableComment,
   isLineBreakingElement,
 } from "../format-helpers.js"
@@ -276,7 +280,7 @@ export class Lowerer {
 
   /** ERB tags that render as a single atomic tag (no body of their own). */
   private isERBLeaf(node: Node): boolean {
-    if (isNode(node, ERBContentNode)) return !isHerbDisableComment(node)
+    if (isERBTagNode(node)) return !isHerbDisableComment(node)
     if (isNode(node, ERBYieldNode)) return true
     if (isNode(node, ERBRenderNode)) return !node.end_node
 
@@ -583,7 +587,8 @@ export class Lowerer {
     if (isNode(node, CDATANode)) return literalText(IdentityPrinter.print(node))
     if (isNode(node, HTMLConditionalElementNode)) return this.lowerConditionalElement(node)
     if (isNode(node, HTMLConditionalOpenTagNode)) return node.conditional ? this.lowerNode(node.conditional) : ""
-    if (isNode(node, ERBContentNode)) return isERBCommentNode(node) ? this.lowerERBComment(node) : this.erbTagDoc(node)
+    if (isERBCommentNode(node) || isInlineRubyCommentNode(node)) return this.lowerERBComment(node as ERBCommentNode | ERBContentNode)
+    if (isNode(node, ERBContentNode)) return this.erbTagDoc(node)
     if (isNode(node, ERBOpenTagNode)) return this.erbTagDoc(node)
     if (isNode(node, ERBEndNode)) return this.erbTagDoc(node)
     if (isNode(node, ERBYieldNode)) return this.erbTagDoc(node)
@@ -624,9 +629,9 @@ export class Lowerer {
     // literal-escape `<%%` (and is not a formatting fixpoint).
     if (!trimmed) return open + " " + close
 
-    // See https://github.com/marcoroth/herb/issues/476 — heredocs keep the
-    // closing tag on its own line.
-    const suffix = trimmed.startsWith("<<") ? "\n" : " "
+    // A heredoc terminator must be alone on its line, so the closing tag goes
+    // on the next one (#476, #2648).
+    const suffix = endsWithHeredocTerminator(content) ? "\n" : " "
 
     return open + ` ${trimmed}${suffix}` + close
   }
@@ -635,7 +640,7 @@ export class Lowerer {
     return literalText(this.erbTagString(node))
   }
 
-  private lowerERBComment(node: ERBContentNode): Doc {
+  private lowerERBComment(node: ERBCommentNode | ERBContentNode): Doc {
     const content = node?.content?.value || ""
 
     if (!content.trim()) {
@@ -1070,7 +1075,7 @@ export class Lowerer {
         return child.content
       }
 
-      if (isNode(child, ERBContentNode)) {
+      if (isERBTagNode(child)) {
         return this.erbTagString(child)
       }
 
@@ -1148,8 +1153,10 @@ export class Lowerer {
     const trimmedInner = rawInner.trim()
 
     // An IE conditional comment guards real markup; it is copied verbatim
-    // rather than treated as a body we may re-indent.
-    if (trimmedInner.startsWith("[if ") && trimmedInner.endsWith("<![endif]")) {
+    // rather than treated as a body we may re-indent. The downlevel-revealed
+    // form (`<!--[if !mso]><!-->` … `<!--<![endif]-->`) parses as two
+    // comments, one per half, so either end alone is enough.
+    if (trimmedInner.startsWith("[if ") || trimmedInner.endsWith("<![endif]")) {
       return literalText(open + rawInner + close)
     }
 
