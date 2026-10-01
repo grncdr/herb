@@ -34,8 +34,8 @@ Three bugs the re-measurements caught, all now fixed on the branch:
    catching something the fixture suite did not.
 
 Open: **§T** (2026-10-02), `=begin`/`=end` delimiters pulled off column 0,
-which changes the Ruby. §S, open since 08-08, lost its destructive half the
-same day and is now cosmetic.
+which makes the compiled template a Ruby syntax error. §S, open since
+08-08, lost its destructive half the same day and is now cosmetic.
 
 ## Reproduce
 
@@ -585,19 +585,43 @@ source + classic:      spike:
 </div>
 ```
 
-`<% =begin %>` is an assignment-less expression, not a comment, so the
-commented-out content becomes live template again. These are all 4
-regressing spike-only reparse diffs and all 3 idempotency failures (the
-second pass parses different Ruby, so it formats differently).
+Off column 0, `=begin` and `=end` are not delimiters, and the compiled
+template is a `SyntaxError` under both stdlib ERB and Erubi (checked
+2026-10-02). These are all 4 regressing spike-only reparse diffs and all 3
+idempotency failures: the first pass's output no longer parses as the
+source did, so the second pass formats something else.
 
-Upstream's fix (#2407) has two parts: print the tag verbatim, indenting only
-its first line (`printVerbatimERBNode`), and treat it as a tag that must sit
-on its own line (`isOwnLineERBTag`, which since #2648 also covers heredoc
-tags). The first part maps onto `literalText` of the identity print. The
-second is the real work: the spike needs a notion of an ERB leaf that is
-never part of a text-flow run and is always separated from its siblings by
-hardlines. The same rule would also complete §S, because upstream puts
-heredoc tags on their own line too.
+Two Ruby constraints apply, and they are not the same:
+
+1. **Inside the tag**, the delimiter must stay in column 0. That is
+   `literalText` of the identity print: `literalline` never re-indents. It
+   is the same as upstream's `printVerbatimERBNode`, which indents only the
+   first line.
+2. **After an `=end` tag**, the Ruby line must end. Erubi (Rails) ends it
+   only when the tag is alone on its source line, by its trim mode.
+   Otherwise it compiles `a <%\n=end %> b` to `=end ; _buf << ' b'`, the
+   comment swallows the code, and the rendered output stops before `b`.
+
+The second constraint is a rule about separators, so it belongs to the
+lowering, a stronger relative of `isLineBreakingElement`: the tag is never a
+fill-run item (a fill chooses separators by measurement and cannot promise a
+`hardline`), and both separators next to it are `hardline` in every child
+mode, including the control-flow mapping of glued and space gaps and the body
+boundaries. Enclosing groups need nothing: a `hardline` propagates breaks.
+Strictly only `=end` needs this; applying it to both delimiters, as
+upstream's `isOwnLineERBTag` does, is simpler and avoids a divergence.
+
+This is the first rule that overrides the gap classifier: it adds a newline
+at a `glued` gap. It is safe there, because a glued `=end` already loses
+the content after it, so only broken inputs change rendering. Design §4
+should state the order: valid Ruby first, then authored gaps, then layout.
+
+Upstream's `isOwnLineERBTag` also covers heredoc tags (#2648), but Ruby
+does not need that: `<p>a <%= foo(<<~X)\n  hi\nX\n%> b</p>` renders
+correctly under Erubi. The heredoc constraint is only `%>` after the
+terminator, which the spike already has. This rule therefore does not
+affect §S: the rest of §S is about keeping an authored newline after `<%=`,
+which is a `hardline` inside the tag's own Doc.
 
 ## R. Regression (fixed): nested multi-line HTML comments lost their indentation
 
@@ -668,7 +692,7 @@ Same content and spacing, different wrap points. Sources:
 ## Known limitations of the spike (not design decisions)
 
 - **Open regression:** `=begin`/`=end` delimiters are pulled off column 0,
-  which turns block comments back into live template — see §T.
+  which makes the compiled template a Ruby syntax error — see §T.
 - Author-expanded multi-line ERB tags are still collapsed (cosmetic since
   10-02) — see §S.
 - `HTMLConditionalElementNode` (element with conditional open *and* close
