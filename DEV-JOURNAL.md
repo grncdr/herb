@@ -244,9 +244,41 @@ moved 30 commits ahead. What the rebase taught us:
   (the classic printer expands glued control flow, we preserve it), gain: 0
   idempotency failures and 2 fewer rendering-changing divergences.
 
+## Rebased onto upstream main (2026-10-02)
+
+After eight weeks away: 512 upstream commits, 24 of them in the formatter
+package. Base `56645ad6`.
+
+- **Environment: `flake.nix` replaces devbox.** The devbox profile had lost
+  its Ruby, and `make` was never in it. `nix develop` provides the toolchain
+  pinned by `.ruby-version`, `.node-version` and the Brewfile/Aptfile, plus
+  `clang-21`/`clang-format-21`/`clang-tidy-21` wrappers, because the
+  Makefile's Linux branch calls the Debian-style versioned names. Nix only
+  sees tracked files in a git flake, so the flake is committed. No
+  `EM_CACHE` setting is necessary: the nixpkgs emscripten already defaults
+  to a writable cache under `/tmp`.
+- One conflict, in the printer-knob commit: upstream's `indentStyle` (#2114)
+  and BOM handling landed at the same seams in `cli.ts` and `formatter.ts`.
+  Both sides kept. The Doc-IR dispatch now gets `input` (BOM stripped), the
+  text the parser saw, so the byte columns line up; tab conversion runs
+  after either printer.
+- Template count is now **93** (was 61). The count check still applies.
+- The suite was green right after the rebuild (1599 passed), and the
+  measurement still showed 19 spike-only reparse diffs. **A green suite does
+  not show that the spike followed upstream**, because the spike's own
+  tests do not exercise upstream's new shapes. Three adaptations were
+  necessary; DOC-IR-DIVERGENCES.md, 10-02 movement note, has the account.
+  Two were copies of classic-printer conditions that upstream then changed
+  (the conditional-comment test, the heredoc test). The third was a new
+  node class (`ERBCommentNode`) that fell silently into the `IdentityPrinter`
+  fallback.
+- New open regression §T (`=begin`/`=end`), and the destructive half of §S
+  is fixed by the heredoc adaptation.
+
 ## Keeping the branch current (daily loop procedure)
 
-Run on each rebase onto `upstream/main`:
+Run on each rebase onto `upstream/main`, inside `nix develop` (a plain shell
+has none of the toolchain):
 
 1. `git fetch --multiple upstream origin`. If not behind and origin is in
    sync, stop — don't create a backup branch for a no-op. (Plain
@@ -295,7 +327,7 @@ Run on each rebase onto `upstream/main`:
 
    **Assert on the count, don't eyeball it.** Templates processed
    (`grep -cE "^(Rendering|\[unchanged\])"`) must equal `find templates -name
-   '*.erb' | wc -l` — 61 as of 2026-08-09. Grepping for `TypeError` also works
+   '*.erb' | wc -l` — 93 as of 2026-10-02. Grepping for `TypeError` also works
    but is weaker; a partial run is the failure mode, and only the count sees it.
 
    History, because the symptom points at the wrong culprit: while bundler was
@@ -342,6 +374,14 @@ Run on each rebase onto `upstream/main`:
    confirm it cannot reach printing (parse a construct it touches through
    both printers), because the aggregate cannot distinguish "no effect" from
    "no coverage".
+
+   When a range **does** land formatter commits, read their diffs for two
+   things before you read the numbers. First, a classic-printer condition
+   that changed: `lower.ts` carries copies of some (heredoc detection,
+   conditional comments), and those copies do not follow by themselves.
+   Second, a new AST node class: the spike sends any class it does not know to
+   the `IdentityPrinter` fallback, silently, so it shows up as layout drift
+   and never as a crash (2026-10-02, `ERBCommentNode`).
 7. `git push --force-with-lease origin feature/formatter-doc-ir`. If the
    lease is refused, stop and report — do not resolve unattended.
 
