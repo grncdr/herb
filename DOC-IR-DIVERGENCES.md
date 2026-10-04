@@ -6,7 +6,7 @@ Companion to DOC-IR-DESIGN.md. Produced by the validation harness
 
 Spike code: `javascript/packages/formatter/src/doc-ir/`. First measured
 2026-07-13; re-measured on each rebase onto upstream `main` (latest:
-2026-10-02, base `56645ad6`).
+2026-10-04, base `56645ad6`).
 
 **Status:** both printers ship side by side behind `formatter.printer` /
 `--printer doc-ir`, default `classic`, so nothing below changes anyone's
@@ -33,9 +33,9 @@ Three bugs the re-measurements caught, all now fixed on the branch:
    account in §R — it is the clearest example so far of the comparison
    catching something the fixture suite did not.
 
-Open: **§T** (2026-10-02), `=begin`/`=end` delimiters pulled off column 0,
-which makes the compiled template a Ruby syntax error. §S, open since
-08-08, lost its destructive half the same day and is now cosmetic.
+No open regression changes Ruby. §T (`=begin`/`=end`, found 2026-10-02) was
+fixed on 10-04 by adopting upstream's own-line ERB tag rule. §S, open since
+08-08, lost its destructive half on 10-02 and is now cosmetic.
 
 ## Reproduce
 
@@ -56,20 +56,20 @@ Earlier columns are kept because the *composition* of the difference has
 changed across rebases, not just the totals — upstream has been fixing the
 same bug family, so which inputs diverge moves even when the rate holds.
 
-| Metric | 2026-10-02 | 2026-08-09 (= 08-08) | 2026-08-07 (= 08-06, 08-05) | 2026-08-04 (= 08-03, 08-02) | 2026-08-01 | 2026-07-30 | 2026-07-13 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Corpus (unique inputs) | 1267 | 1204 | 1189 | 1163 | 1099 | 1081 | 971 |
-| Compared (parse ok, not scaffold/ignored) | 1149 | 1091 | 1076 | 1051 | 987 | 969 | 860 |
-| **Exact match with current formatter** | **928 (80.8%)** | 896 (82.1%) | 889 (82.6%) | 863 (82.1%) | 815 (82.6%) | 797 (82.2%) | 724 (84.2%) |
-| Exact + blank-line-policy-only diffs | 1002 (87.2%) | 963 (88.3%) | 956 (88.8%) | 930 (88.5%) | 885 (89.7%) | 867 (89.5%) | 792 (92.1%) |
-| Layout-only diffs (same content, different break points) | 53 | 44 | 37 | 37 | 27 | 27 | 15 |
-| Content diffs (all in categories below) | 94 | 84 | 83 | 84 | 75 | 75 | 53 |
-| Spike crashes | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| **Idempotency failures** (format∘format ≠ format) | **3 / 1149** (all §T) | 0 / 1091 | 0 / 1076 | 0 / 1051 | 0 / 987 | 0 / 969 | 0 / 860 |
-| Reparse-structure diffs — spike | 117 | 113 | 111 | 108 | 106 | 117 | 113 |
-| Reparse-structure diffs — current formatter (baseline) | 162 | 155 | 154 | 152 | 152 | 151 | 140 |
-| **Spike-only reparse diffs** | **5** (1 §E deliberate, **4 regression** — §T) | 2 (1 §E deliberate, 1 regression — §S) | 1 (§E, deliberate) | 1 (§E, deliberate) | 1 | 1 | 1 |
-| Corpus wall-time — current / spike | 537ms / 438ms | 549ms / 462ms | 555ms / 460ms | 521ms / 449ms | 487ms / 425ms | 485ms / 418ms | 461ms / 408ms |
+| Metric | 2026-10-04 | 2026-10-02 | 2026-08-09 (= 08-08) | 2026-08-07 (= 08-06, 08-05) | 2026-08-04 (= 08-03, 08-02) | 2026-08-01 | 2026-07-30 | 2026-07-13 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Corpus (unique inputs) | 1267 | 1267 | 1204 | 1189 | 1163 | 1099 | 1081 | 971 |
+| Compared (parse ok, not scaffold/ignored) | 1149 | 1149 | 1091 | 1076 | 1051 | 987 | 969 | 860 |
+| **Exact match with current formatter** | **941 (81.9%)** | 928 (80.8%) | 896 (82.1%) | 889 (82.6%) | 863 (82.1%) | 815 (82.6%) | 797 (82.2%) | 724 (84.2%) |
+| Exact + blank-line-policy-only diffs | 1016 (88.4%) | 1002 (87.2%) | 963 (88.3%) | 956 (88.8%) | 930 (88.5%) | 885 (89.7%) | 867 (89.5%) | 792 (92.1%) |
+| Layout-only diffs (same content, different break points) | 39 | 53 | 44 | 37 | 37 | 27 | 27 | 15 |
+| Content diffs (all in categories below) | 94 | 94 | 84 | 83 | 84 | 75 | 75 | 53 |
+| Spike crashes | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| **Idempotency failures** (format∘format ≠ format) | **0 / 1149** | 3 / 1149 (all §T) | 0 / 1091 | 0 / 1076 | 0 / 1051 | 0 / 987 | 0 / 969 | 0 / 860 |
+| Reparse-structure diffs — spike | 113 | 117 | 113 | 111 | 108 | 106 | 117 | 113 |
+| Reparse-structure diffs — current formatter (baseline) | 162 | 162 | 155 | 154 | 152 | 152 | 151 | 140 |
+| **Spike-only reparse diffs** | **1** (§E, deliberate) | 5 (1 §E deliberate, 4 regression — §T) | 2 (1 §E deliberate, 1 regression — §S) | 1 (§E, deliberate) | 1 (§E, deliberate) | 1 | 1 | 1 |
+| Corpus wall-time — current / spike | 520ms / 438ms | 537ms / 438ms | 549ms / 462ms | 555ms / 460ms | 521ms / 449ms | 487ms / 425ms | 485ms / 418ms | 461ms / 408ms |
 
 08-05 carried two rebases and is reported with 08-06 and 08-07 as one column,
 at its final state (base `25c4a90b`). The two intermediate readings on 08-05
@@ -366,6 +366,25 @@ Other upstream changes, checked against both printers rather than inferred:
 The exact *rate* fell 82.1% → 80.8% while the count rose 896 → 928, on a
 corpus that grew by 63 inputs. As before, the rate says little on its own.
 
+**10-04 movement (same base; spike change only): §T fixed.** The spike now
+uses upstream's `isOwnLineERBTag` as is (design §4, "Own-line ERB tags"):
+tags carrying a `=begin`/`=end` delimiter, tags ending on a heredoc
+terminator, and multi-line ERB comments always get a line of their own, and
+delimiter tags are reproduced as authored. The six #2407 inputs from
+`test/erb/comment.test.ts` are now in `test/doc-ir/lower.test.ts`.
+
+Spike-only reparse diffs went 5 → 1 (only §E is left, as it was from 07-13 to
+08-07) and idempotency failures 3 → 0. Exact matches rose 928 → 941 and
+layout-only fell 53 → 39, because the rule also covers the ERB comments and
+heredoc tags that were layout-only diffs: 14 → 5 comment inputs, 13 → 9
+author-expanded tags.
+
+One #2407 input still differs, by §A alone: for `<%\n=begin %>` + `<span>` +
+`<%\n=end %>`, the classic printer inserts a blank line on each side of the
+`<span>`, and the spike only preserves authored blank lines. The delimiters
+are in column 0 in both outputs, which is all the upstream test asserts.
+Blank-only diffs 74 → 75.
+
 The four `test.fails` cases of the significant-whitespace family (#1729 A–D,
 including the two deferred ones) all produce their target output under the
 spike (`test/doc-ir/lower.test.ts`).
@@ -565,7 +584,13 @@ already knows how to represent — a `hardline` in the tag's Doc — and heredoc
 bodies are content that must not move at all, i.e. the one legitimate use of
 `literalline` (see §R for the converse mistake). Not yet attempted.
 
-## T. Regression (open): `=begin`/`=end` delimiters are pulled off column 0
+## T. Regression (fixed 2026-10-04): `=begin`/`=end` delimiters were pulled off column 0
+
+**Fixed** by adopting upstream's own-line rule for ERB tags; see design §4,
+"Own-line ERB tags", and the 10-04 movement note. The rule applies to all
+three kinds upstream covers, heredoc tags included, although Ruby itself
+needs it only after `=end` (below). Matching upstream was preferred over the
+narrower rule. The account as filed on 10-02 follows.
 
 **Open. A defect in the spike, not a decision.** Found by the 10-02 rebase,
 from tests upstream added with #2407.
@@ -669,7 +694,7 @@ classic printer. Covered by 11 cases in `test/doc-ir/lower.test.ts`.
 Result: layout-only 41 → 37, spike-only reparse diffs 3 → 1 (§E only), exact
 matches 871 → 875, idempotency failures still 0.
 
-## Layout-only diffs (53)
+## Layout-only diffs (39)
 
 Same content and spacing, different wrap points. Sources:
 
@@ -681,18 +706,19 @@ Same content and spacing, different wrap points. Sources:
 - ERB control flow in attribute position (see the 08-02 movement note).
 - One inline element whose only child is an authored-multiline comment
   (`<span>\n  <!-- … -->\n</span>`), which the spike inlines because it fits.
-- Author-expanded multi-line ERB tags collapsed onto their delimiters (13
-  as of 10-02, including the heredoc inputs) — the cosmetic half of §S.
-- ERB comments next to text (14 as of 10-02). The classic printer puts a
-  multi-line ERB comment, or one followed by a text run, on its own line
-  (`isOwnLineERBTag`); the spike follows the authored gap and keeps
-  `hello <%# multi … %> world` in the flow.
-- `=begin`/`=end` tags (5) — §T, which also changes the Ruby.
+- Author-expanded multi-line ERB tags collapsed onto their delimiters (9
+  as of 10-04) — the cosmetic half of §S.
+- ERB comments (5 as of 10-04; 14 before the own-line rule, which now puts
+  multi-line comments on their own line in both printers). Two are a
+  single-line comment followed by a text run, which the classic printer
+  keeps on a line of its own and the spike fills (`<%# … %> Some text…`).
+  One is a `herb:disable` comment the classic printer appends to the
+  previous line (§B). Two are inner-whitespace details: `<%#\n\n%>` becomes
+  `<%#  %>` (classic) or `<%# %>` (spike), and a comment whose first line
+  shares the `<%#` line.
 
 ## Known limitations of the spike (not design decisions)
 
-- **Open regression:** `=begin`/`=end` delimiters are pulled off column 0,
-  which makes the compiled template a Ruby syntax error — see §T.
 - Author-expanded multi-line ERB tags are still collapsed (cosmetic since
   10-02) — see §S.
 - `HTMLConditionalElementNode` (element with conditional open *and* close
