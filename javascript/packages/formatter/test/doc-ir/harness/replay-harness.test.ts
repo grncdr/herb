@@ -152,7 +152,8 @@ describe.skipIf(!HARNESS_ENABLED)("doc-ir replay harness", () => {
     let currentTotalMs = 0
     let spikeTotalMs = 0
 
-    const SAMPLE_CAP = 60
+    // SAMPLE_CAP=Infinity keeps every sample, so categories can be counted from them.
+    const SAMPLE_CAP = Number(process.env.SAMPLE_CAP ?? 60)
 
     for (const entry of entries) {
       const options = {

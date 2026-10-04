@@ -272,8 +272,32 @@ package. Base `56645ad6`.
   (the conditional-comment test, the heredoc test). The third was a new
   node class (`ERBCommentNode`) that fell silently into the `IdentityPrinter`
   fallback.
-- New open regression §T (`=begin`/`=end`), and the destructive half of §S
-  is fixed by the heredoc adaptation.
+- New open regression: `=begin`/`=end` delimiters pulled off column 0 (fixed
+  on 10-04 by the own-line ERB tag rule, design §4). The destructive half of
+  §S is fixed by the heredoc adaptation.
+
+## Divergence report rewritten as a snapshot (2026-10-04)
+
+The own-line ERB tag rule (design §4) fixed the `=begin`/`=end` regression:
+spike-only reparse diffs 5 → 1 (§E), idempotency failures 3 → 0, exact
+matches 928 → 941.
+
+DOC-IR-DIVERGENCES.md then dropped its per-rebase columns and movement notes;
+it now describes only the current state. Classifying every sample
+(`SAMPLE_CAP=Infinity`, new in the harness) and re-checking every section's
+example with both printers showed:
+
+- **Converged, removed:** §D (attribute count, #1834), §F (multi-line inline
+  content with control flow), §G (punctuation across a newline), §H
+  (`<br>` placement, #1924) and §J (`<%%>`). Both printers now agree on their
+  examples, and no corpus diff remains in them.
+- **New spike defects, found by classifying the layout-only diffs:**
+  §U (Tailwind `whitespace-pre`/`-pre-wrap` content is reformatted, which
+  changes rendering; the classic printer keeps it verbatim), §V (text in
+  control-flow bodies is not filled, one item per line), §W (inline siblings
+  with only a space between them are split by a hard line break).
+- §S now also covers #2632: the parser splits a tag that continues and closes
+  a block, and the spike joins the halves back into one tag.
 
 ## Keeping the branch current (daily loop procedure)
 
@@ -356,10 +380,13 @@ has none of the toolchain):
    were upstream's, and #2101 fixed them on 08-09. The technique is the part
    worth keeping: before blaming the branch for a new suite failure, re-run
    that file on a detached `upstream/main`. One checkout settles it.
-6. Re-measure the divergence report: capture a fresh corpus, replay, update
-   the table and the movement notes in DOC-IR-DIVERGENCES.md. Upstream is
-   actively fixing the same bug family, so the numbers go stale on almost
-   every rebase.
+6. Re-measure the divergence report: capture a fresh corpus, replay with
+   `SAMPLE_CAP=Infinity`, and rewrite DOC-IR-DIVERGENCES.md as a snapshot of
+   the new state (since 2026-10-04 it holds no history; earlier measurements
+   are in git). Classify every sample into its section and re-check each
+   section's example with both printers, because upstream keeps converging
+   (§F, §G, §H and §J disappeared that way). Put what this rebase changed and
+   why in this journal, not in the report.
 
    **`rm -f $CORPUS_FILE` first — the capture appends.** Re-running it in a
    session that already captured once doubles the file (1281 → 2562 lines).
@@ -386,13 +413,14 @@ has none of the toolchain):
    lease is refused, stop and report — do not resolve unattended.
 
 Harness caveat: `samples` arrays in the JSON report are capped at 60 per
-category, so counting categories from samples undercounts and drifts run to
-run. Use `counts` for totals and verify per-category claims by formatting the
-specific input with both printers (`--compare`, or `format(src, { printer })`).
+category by default, so counting categories from them undercounts. Run the
+replay with `SAMPLE_CAP=Infinity` before classifying, and verify per-category
+claims by formatting the specific input with both printers (`--compare`, or
+`format(src, { printer })`).
 
 Watch `spikeOnlyReparseDiff` on every run — it is the regression signal, and
 it sat at 1 (deliberate, §E) from 07-13 to 08-04. On 2026-08-05 it went to 3
-and caught a real spike defect (§R, nested HTML comment indentation, fixed the
+and caught a real spike defect (nested HTML comment indentation, fixed the
 same day) within one rebase of upstream fixing the same defect on their side.
 Nothing else in the report is a regression alarm: exact-match rate drifts with
 corpus growth and says little on its own — it moved only 82.1% → 82.0% while
