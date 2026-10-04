@@ -314,6 +314,137 @@ describe("doc-ir lowering", () => {
     })
   })
 
+  // Inputs from upstream #2407 (test/erb/comment.test.ts), plus glued
+  // neighbours in control flow and inline elements.
+  describe("own-line ERB tags (=begin/=end, heredocs)", () => {
+    const expectFixedPoint = (source: string) => {
+      const once = format(source)
+
+      expect(format(once)).toEqual(once)
+      expect(Herb.parse(once).value.recursiveErrors()).toEqual([])
+
+      return once
+    }
+
+    test("keeps `=begin`/`=end` delimiters anchored to column 0", () => {
+      const source = dedent`
+        <%
+        =begin %>
+        commented out
+        <%
+        =end %>
+        <div>Content</div>
+      `
+
+      expect(expectFixedPoint(source)).toEqual(source)
+    })
+
+    test("leaves a delimiter in column 0 when the tag itself is indented", () => {
+      const source = dedent`
+        <div>
+          <%
+        =begin %>
+          x
+          <%
+        =end %>
+        </div>
+      `
+
+      expect(expectFixedPoint(source)).toEqual(source)
+    })
+
+    // The classic printer also inserts blank lines around the <span>; the
+    // spike only preserves authored ones (DOC-IR-DIVERGENCES.md §A).
+    test("does not collapse a block comment onto a single line", () => {
+      const source = dedent`
+        <%
+        =begin %>
+        <span class="x">x</span>
+        <%
+        =end %>
+      `
+
+      expect(expectFixedPoint(source)).toEqual(source)
+    })
+
+    test("keeps a heredoc carrying the delimiter text on its own lines inside a text flow", () => {
+      const source = dedent`
+        <p>before <%= <<HEREDOC
+        =begin literal
+        HEREDOC
+        %> after</p>
+      `
+
+      expect(expectFixedPoint(source)).toEqual(dedent`
+        <p>
+          before
+          <%= <<HEREDOC
+        =begin literal
+        HEREDOC
+        %>
+          after
+        </p>
+      `)
+    })
+
+    test("does not treat heredoc body text as a block-comment delimiter", () => {
+      const source = dedent`
+        <%= <<HEREDOC
+        =begin literal
+        HEREDOC
+        %>
+      `
+
+      expect(expectFixedPoint(source)).toEqual(source)
+    })
+
+    test("an already-expanded block comment is a fixed point", () => {
+      const source = dedent`
+        <%
+        =begin
+        %>
+        commented out
+        <%
+        =end
+        %>
+      `
+
+      expect(expectFixedPoint(source)).toEqual(source)
+    })
+
+    // Text glued *after* `=end %>` cannot be tested: the comment line would
+    // swallow it (Erubi emits `=end ; _buf << ...`), and here also the `if`'s
+    // `end`, so Herb rejects the source.
+    test("glued neighbours inside control flow move to their own lines", () => {
+      const source = "<% if x %>a<%\n=begin %>b<%\n=end %>\n<% end %>"
+
+      // `a` stays glued to `<% if x %>`: that boundary has no own-line tag.
+      expect(expectFixedPoint(source)).toEqual(dedent`
+        <% if x %>a
+          <%
+        =begin %>
+          b
+          <%
+        =end %>
+        <% end %>
+      `)
+    })
+
+    test("glued boundaries of an inline element break around an own-line tag", () => {
+      const source = "<span><%\n=begin %>x<%\n=end %></span>"
+
+      expect(expectFixedPoint(source)).toEqual(dedent`
+        <span>
+          <%
+        =begin %>
+          x
+          <%
+        =end %>
+        </span>
+      `)
+    })
+  })
+
   test("case/when structure", () => {
     const source = dedent`
       <% case status %>

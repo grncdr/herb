@@ -191,6 +191,24 @@ ancestors to break — the current `hasComplexERBControlFlow` heuristic becomes
 structural). Control flow allowed to inline in attribute position uses `line`
 within a group instead.
 
+### Own-line ERB tags
+
+**Decided (2026-10-04, spike owner):** match upstream's `isOwnLineERBTag`
+(#2407, #2648). These tags never share a line with a sibling: tags carrying
+a Ruby `=begin`/`=end` delimiter, tags whose content ends on a heredoc
+terminator, and multi-line ERB comments. Lowering gives them `hardline` on
+both sides, in every child mode, and reports a glued or spaced parent
+boundary next to one as a line gap. They are never part of a `fill` run, so
+measurement cannot place a sibling on their line. Delimiter tags lower to
+`literalText` of the authored tag, so the delimiter stays in column 0.
+
+This is the one rule that ranks above the gap classifier (§5): it puts a
+newline at a `glued` gap. Text glued after an `=end` tag is already
+swallowed by the comment line (Erubi compiles `=end ; _buf << …`), so the
+change can only correct an input that was broken. That correction is
+accepted, because it keeps the rule simple and matches upstream. Order:
+valid Ruby first, then authored gaps, then layout.
+
 ### Content-preserving elements (`pre`, `script`, `style`, `textarea`)
 
 Lower the raw source slice with `literalline` separators. No special

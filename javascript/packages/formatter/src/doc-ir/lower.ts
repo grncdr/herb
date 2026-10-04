@@ -11,6 +11,8 @@
  * - Control flow / blocks authored on a single source line stay inline when
  *   they fit; authored multiline they stay multiline (their internal gaps
  *   lower to hardlines, which propagate).
+ * - Own-line ERB tags (upstream's `isOwnLineERBTag`) never share a line with
+ *   a sibling, even across a glued gap.
  */
 
 import { IdentityPrinter } from "@herb-tools/printer"
@@ -70,6 +72,8 @@ import {
   isContentPreserving,
   isFrontmatter,
   isERBTagNode,
+  isERBBlockCommentDelimiter,
+  isOwnLineERBTag,
   endsWithHeredocTerminator,
   isHerbDisableComment,
   isLineBreakingElement,
@@ -278,9 +282,13 @@ export class Lowerer {
 
   // --- Child sequences ---
 
-  /** ERB tags that render as a single atomic tag (no body of their own). */
+  /**
+   * ERB tags that render as a single atomic tag (no body of their own) and
+   * can share a line with their siblings. Own-line tags (`isOwnLineERBTag`)
+   * are excluded; `lowerChildren` gives them a line of their own.
+   */
   private isERBLeaf(node: Node): boolean {
-    if (isERBTagNode(node)) return !isHerbDisableComment(node)
+    if (isERBTagNode(node)) return !isHerbDisableComment(node) && !isOwnLineERBTag(node)
     if (isNode(node, ERBYieldNode)) return true
     if (isNode(node, ERBRenderNode)) return !node.end_node
 
@@ -423,6 +431,15 @@ export class Lowerer {
     }
 
     const blockSeparator = (gap: GapKind): Doc => {
+      // Own-line ERB tags (=begin/=end delimiters, heredocs, multi-line
+      // comments) never share a line with a sibling, whatever the source gap.
+      // This adds a newline at a glued gap, which only changes inputs whose
+      // Ruby was already broken.
+      const previousItem = items[index - 1]
+      const ownLine = isOwnLineERBTag(items[index]) || (previousItem !== undefined && isOwnLineERBTag(previousItem))
+
+      if (ownLine && gap !== "blank") return hardline
+
       if (mode === "control-flow" || mode === "attributes") {
         switch (gap) {
           // In attribute position, glued source (`id="a"<% if %>`) would
@@ -436,8 +453,6 @@ export class Lowerer {
 
       // The one insertion exception (design §4): a blank line after a
       // doctype or XML declaration.
-      const previousItem = items[index - 1]
-
       if (previousItem && (isNode(previousItem, HTMLDoctypeNode) || isNode(previousItem, XMLDeclarationNode))) {
         return [hardline, hardline]
       }
@@ -531,7 +546,9 @@ export class Lowerer {
       let merge: Doc | null = null
 
       if (previous && currentBuilder?.hasContent) {
-        if (mode === "control-flow" || mode === "attributes") {
+        if (isOwnLineERBTag(previous)) {
+          // Never merge onto an own-line tag's line (see blockSeparator).
+        } else if (mode === "control-flow" || mode === "attributes") {
           if (gap === "glued" && (isNode(item, HTMLTextNode) || this.isERBLeaf(item) || (isNode(item, HTMLElementNode) && isInlineElement(getTagName(item))))) {
             merge = ""
           }
@@ -562,12 +579,17 @@ export class Lowerer {
 
     flushBuilder()
 
+    // An own-line tag at either end also takes a line break at the parent's
+    // boundary, so a glued or spaced boundary is reported as a line gap.
+    const boundaryGap = (gap: GapKind, edge: Node | undefined): GapKind =>
+      edge !== undefined && isOwnLineERBTag(edge) && (gap === "glued" || gap === "space") ? "line" : gap
+
     return {
       doc: out.length === 1 ? out[0] : out,
       leadingSuffixes,
       empty: !hasParts,
-      leadingGap: gaps[0] ?? trailing,
-      trailingGap: trailing,
+      leadingGap: boundaryGap(gaps[0] ?? trailing, items[0]),
+      trailingGap: boundaryGap(trailing, items[items.length - 1]),
       singleFillRun: fillRunCount === 1 && nonFillParts === 0,
     }
   }
@@ -587,6 +609,9 @@ export class Lowerer {
     if (isNode(node, CDATANode)) return literalText(IdentityPrinter.print(node))
     if (isNode(node, HTMLConditionalElementNode)) return this.lowerConditionalElement(node)
     if (isNode(node, HTMLConditionalOpenTagNode)) return node.conditional ? this.lowerNode(node.conditional) : ""
+    // Ruby reads `=begin`/`=end` only in column 0, so the tag is reproduced
+    // as authored; `literalline` does not re-indent.
+    if (isERBBlockCommentDelimiter(node)) return literalText(IdentityPrinter.print(node))
     if (isERBCommentNode(node) || isInlineRubyCommentNode(node)) return this.lowerERBComment(node as ERBCommentNode | ERBContentNode)
     if (isNode(node, ERBContentNode)) return this.erbTagDoc(node)
     if (isNode(node, ERBOpenTagNode)) return this.erbTagDoc(node)
